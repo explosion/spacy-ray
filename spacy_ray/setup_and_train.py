@@ -19,9 +19,13 @@ def setup_and_train(use_gpu, train_args, rank):
     train(randomization_index=rank, **train_args)
 
 
-def distributed_setup_and_train(use_gpu, num_workers, strategy, train_args):
+def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, train_args):
     config_path = train_args["config_path"]
-    ray.init(ignore_reinit_error=True)
+    # TODO: Find a way to do pass in an address correctly
+    if ray_address is not None:
+        ray.init(address=ray_address)
+    else:
+        ray.init(ignore_reinit_error=True)
     if strategy == "ps":
         remote_train = ray.remote(setup_and_train)
         if use_gpu >= 0:

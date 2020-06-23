@@ -14,6 +14,8 @@ def setup_and_train(use_gpu, train_args, rank):
         util.use_gpu(0)
     else:
         msg.info("Using CPU")
+    if rank != 0:
+        train_args["disable_tqdm"] = True
     train(randomization_index=rank, **train_args)
 
 

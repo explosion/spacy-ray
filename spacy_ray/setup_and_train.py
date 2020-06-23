@@ -53,7 +53,7 @@ def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, tra
         def train_fn(worker):
             optimizer = AllreduceOptimizer(config_path, worker.communicator)
             train_args["remote_optimizer"] = optimizer
-            return setup_and_train(True, train_args)
+            return setup_and_train(True, train_args, worker.rank)
 
         ray.get([w.execute.remote(train_fn) for w in workers])
     else:

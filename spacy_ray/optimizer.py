@@ -5,7 +5,6 @@ from spacy import util
 from typing import Tuple
 from thinc.types import FloatsXd
 
-
 cp = None
 nccl = None
 
@@ -28,7 +27,8 @@ class RayNCCLWorker:
         self.unique_id = nccl.get_unique_id()
 
     def initialize(self, head_id):
-        self.communicator = nccl.NcclCommunicator(self.world_size, head_id, self.rank)
+        self.communicator = nccl.NcclCommunicator(self.world_size, head_id,
+                                                  self.rank)
 
     def get_unique_id(self):
         return self.unique_id
@@ -48,30 +48,26 @@ class AllreduceOptimizer:
         self.weights_synced = set()
 
     def allreduce(self, tensor):
-        self.communicator.allReduce(
-            tensor.data.ptr,
-            tensor.data.ptr,
-            tensor.size,
-            nccl.NCCL_FLOAT32,
-            nccl.NCCL_SUM,
-            cp.cuda.Stream.null.ptr
-        )
+        self.communicator.allReduce(tensor.data.ptr, tensor.data.ptr,
+                                    tensor.size, nccl.NCCL_FLOAT32,
+                                    nccl.NCCL_SUM, cp.cuda.Stream.null.ptr)
         return tensor
 
     def __call__(
-        self,
-        key: Tuple[int, str],
-        weights: FloatsXd,
-        gradient: FloatsXd,
-        *,
-        lr_scale: float = 1.0,
+            self,
+            key: Tuple[int, str],
+            weights: FloatsXd,
+            gradient: FloatsXd,
+            *,
+            lr_scale: float = 1.0,
     ):
         if key not in self.weights_synced:
             self.weights_synced.add(key)
             weights = self.allreduce(weights) / self.communicator.size()
 
         gradient = self.allreduce(gradient) / self.communicator.size()
-        flat_weights, gradient = self.optimizer(key, weights, gradient, lr_scale=lr_scale)
+        flat_weights, gradient = self.optimizer(
+            key, weights, gradient, lr_scale=lr_scale)
         return flat_weights, gradient
 
     def __getattr__(self, name):

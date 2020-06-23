@@ -3,7 +3,6 @@ import threading
 import ray
 from spacy.cli.ray_utils import create_optimizer
 
-
 RAY_PS_WORKER_GPU_RESERVE = 0.9
 RAY_PS_OPTIM_GPU_RESERVE = 0.1
 
@@ -36,7 +35,10 @@ class OptimizerWorker:
             self.lock.release()
             self.grad_dict[key] /= self.world_size
             new_weights, new_grads = self.optimizer(
-                key, self.weights_dict[key], self.grad_dict[key], lr_scale=lr_scale)
+                key,
+                self.weights_dict[key],
+                self.grad_dict[key],
+                lr_scale=lr_scale)
             self.weights_dict[key] = new_weights
             self.grad_dict[key] = new_grads
             self.waiting = 0

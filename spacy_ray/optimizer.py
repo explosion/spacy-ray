@@ -8,6 +8,13 @@ from thinc.types import FloatsXd
 cp = None
 nccl = None
 
+try:
+    import cupy as cp
+    from cupy.cuda import nccl
+except ImportError:
+    msg.fail("Need to `pip install cupy-[driver version]` to use "
+             "multi-gpu distributed training.")
+
 
 def create_optimizer(config_path):
     msg.info(f"Loading config from: {config_path}")
@@ -20,8 +27,6 @@ def create_optimizer(config_path):
 
 class RayNCCLWorker:
     def __init__(self, rank, world_size):
-        global nccl
-        from cupy.cuda import nccl
         self.rank = rank
         self.world_size = world_size
         self.unique_id = nccl.get_unique_id()
@@ -39,10 +44,6 @@ class RayNCCLWorker:
 
 class AllreduceOptimizer:
     def __init__(self, config_path, communicator):
-        global cp
-        import cupy as cp
-        global nccl
-        from cupy.cuda import nccl
         self.optimizer = create_optimizer(config_path)
         self.communicator = communicator
         self.weights_synced = set()

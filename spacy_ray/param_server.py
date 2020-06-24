@@ -3,13 +3,22 @@ import threading
 import ray
 from spacy.cli.ray_utils import create_optimizer
 
+
 RAY_PS_WORKER_GPU_RESERVE = 0.9
 RAY_PS_OPTIM_GPU_RESERVE = 0.1
 
 
-class OptimizerWorker:
-    def __init__(self, config_path, world_size):
-        self.optimizer = create_optimizer(config_path)
+class ParamServer:
+    """A synchronous parameter server.
+
+    Holds a Thinc optimizer internally.
+
+    Args:
+        config_path (str): Path to optimizer configuration.
+        world_size (int): Size of total workers running updates.
+    """
+    def __init__(self, world_size):
+        self.optimizer = None
         self.new_weights = None
         self.barrier = threading.Barrier(world_size)
         self.lock = threading.Lock()
@@ -17,6 +26,9 @@ class OptimizerWorker:
         self.weights_dict = {}
         self.grad_dict = {}
         self.world_size = world_size
+
+    def create_optimizer(self, config_path):
+        self.optimizer = create_optimizer(config_path)
 
     def call(self, key, weights, gradient, *, lr_scale=1.0):
         self.lock.acquire()
@@ -53,15 +65,17 @@ class OptimizerWorker:
 
 
 class RayOptimizer:
+    """Local handle to the parameter server."""
     local_optimizer = None
 
     def __init__(self, config_path, use_gpu, world_size):
-        RemoteOptimizer = ray.remote(OptimizerWorker)
+        RemotePS = ray.remote(ParamServer)
         options = {"max_concurrency": world_size}
         if use_gpu >= 0:
             options["num_gpus"] = RAY_PS_OPTIM_GPU_RESERVE
-        RemoteOptimizer = RemoteOptimizer.options(**options)
-        self.optimizer = RemoteOptimizer.remote(config_path, world_size)
+        RemotePS = RemotePS.options(**options)
+        self.optimizer = RemotePS.remote(config_path, world_size)
+        self.optimizer.create_optimizer.remote(config_path)
         self.sync()
 
     def sync(self):

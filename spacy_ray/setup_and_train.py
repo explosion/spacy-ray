@@ -21,7 +21,6 @@ def setup_and_train(use_gpu, train_args, rank):
 
 def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, train_args):
     config_path = train_args["config_path"]
-    # TODO: Find a way to do pass in an address correctly
     if ray_address is not None:
         ray.init(address=ray_address)
     else:
@@ -29,6 +28,7 @@ def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, tra
     if strategy == "ps":
         remote_train = ray.remote(setup_and_train)
         if use_gpu >= 0:
+
             msg.info("Enabling GPU with Ray")
             remote_train = remote_train.options(
                 num_gpus=RAY_PS_WORKER_GPU_RESERVE)
@@ -42,6 +42,7 @@ def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, tra
     elif strategy == "allreduce":
         assert use_gpu >= 0, "All-reduce strategy can only be used with GPU!"
         from spacy_ray.optimizer import RayNCCLWorker, AllreduceOptimizer
+
         RemoteRayWorker = ray.remote(RayNCCLWorker).options(num_gpus=1)
         workers = [
             RemoteRayWorker.remote(rank, num_workers)

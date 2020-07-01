@@ -1,7 +1,7 @@
 """Parameter Server distributed training with Ray."""
 import threading
 import ray
-from spacy.cli.ray_utils import create_optimizer
+from spacy_ray.optimizer import create_optimizer
 
 
 RAY_PS_WORKER_GPU_RESERVE = 0.9

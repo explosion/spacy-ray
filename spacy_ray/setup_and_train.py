@@ -3,7 +3,7 @@ import os
 
 from wasabi import msg
 from spacy import util
-from spacy.cli.train_from_config import train
+from spacy.cli.train import train
 from spacy_ray.param_server import RayOptimizer, RAY_PS_WORKER_GPU_RESERVE
 
 
@@ -58,4 +58,4 @@ def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, tra
 
         ray.get([w.execute.remote(train_fn) for w in workers])
     else:
-        raise ValueError(f"Strategy '{strategy}' is not implemented!")
+        msg.fail(f"Strategy '{strategy}' is not implemented!", exits=1)

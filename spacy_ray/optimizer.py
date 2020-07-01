@@ -30,12 +30,21 @@ class RayNCCLWorker:
         self.rank = rank
         self.world_size = world_size
         self.unique_id = nccl.get_unique_id()
+        self.communicator = None
+        self.reporter = None
+
+    def setup_optimizer(self, config_path):
+        if self.communicator is None:
+            raise ValueError("Communicator not initialized.")
+        self.optimizer = AllreduceOptimizer(
+            config_path, self.rank, self.communicator, reporter=self.reporter)
 
     def initialize(self, head_id):
         self.communicator = nccl.NcclCommunicator(self.world_size, head_id,
                                                   self.rank)
 
-    def get_unique_id(self):
+    def setup_head(self, reporter=None):
+        self.reporter = reporter
         return self.unique_id
 
     def execute(self, fn):
@@ -43,16 +52,22 @@ class RayNCCLWorker:
 
 
 class AllreduceOptimizer:
-    def __init__(self, config_path, communicator):
+    def __init__(self, config_path, communicator, reporter=None):
         self.optimizer = create_optimizer(config_path)
         self.communicator = communicator
         self.weights_synced = set()
+        self.reporter = reporter
 
     def allreduce(self, tensor):
         self.communicator.allReduce(tensor.data.ptr, tensor.data.ptr,
                                     tensor.size, nccl.NCCL_FLOAT32,
                                     nccl.NCCL_SUM, cp.cuda.Stream.null.ptr)
         return tensor
+
+    def step_schedules(self):
+        if self.reporter is not None:
+            self.reporter.update.remote()
+        self.optimizer.step_schedules()
 
     def __call__(
             self,

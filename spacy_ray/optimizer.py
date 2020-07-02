@@ -33,15 +33,11 @@ class RayNCCLWorker:
         self.communicator = None
         self.reporter = None
 
-    def setup_optimizer(self, config_path):
-        if self.communicator is None:
-            raise ValueError("Communicator not initialized.")
-        self.optimizer = AllreduceOptimizer(
-            config_path, self.rank, self.communicator, reporter=self.reporter)
-
-    def initialize(self, head_id):
+    def initialize(self, head_id, config_path):
         self.communicator = nccl.NcclCommunicator(self.world_size, head_id,
                                                   self.rank)
+        self.optimizer = AllreduceOptimizer(
+            config_path,  self.communicator, reporter=self.reporter)
 
     def setup_head(self, reporter=None):
         self.reporter = reporter

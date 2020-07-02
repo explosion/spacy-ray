@@ -1,6 +1,7 @@
 import asyncio
 import ray
 import os
+import itertools
 import tqdm
 
 from wasabi import msg
@@ -17,7 +18,6 @@ class ProgressReporter:
     async def get_update_blocking(self):
         await self.updated.wait()
         self.updated.clear()
-        return 1
 
     def update(self):
         self.updated.set()
@@ -29,16 +29,17 @@ def setup_and_train(use_gpu, train_args, rank):
         util.use_gpu(0)
     else:
         msg.info("Using CPU")
-    if rank != 0:
-        train_args["disable_tqdm"] = True
+    train_args["disable_tqdm"] = True
     train(randomization_index=rank, **train_args)
 
 
-def print_tqdm(reporter, eval_freq):
+def print_tqdm(reporter, eval_freq, num_workers):
     while True:
-        progress = tqdm.tqdm(total=eval_freq, leave=False)
+        progress = None
         for i in range(eval_freq):
             ray.get(reporter.get_update_blocking.remote())
+            if progress is None:
+                progress = tqdm.tqdm(total=eval_freq, leave=False)
             progress.update(1)
         progress.close()
 
@@ -74,15 +75,15 @@ def distributed_setup_and_train(use_gpu, num_workers, strategy, ray_address, tra
             for rank in range(num_workers)
         ]
         head_id = ray.get(workers[0].setup_head.remote(reporter))
-        ray.get([w.initialize.remote(head_id) for w in workers])
+        ray.get([w.initialize.remote(head_id, config_path) for w in workers])
 
         def train_fn(worker):
             train_args["remote_optimizer"] = worker.optimizer
             return setup_and_train(True, train_args, worker.rank)
 
-        ray.get([w.execute.remote(train_fn) for w in workers])
+        [w.execute.remote(train_fn) for w in workers]
         config = util.load_config(config_path, create_objects=False)
         eval_freq = config["training"]["eval_frequency"]
-        print_tqdm(reporter, eval_freq)
+        print_tqdm(reporter, eval_freq, num_workers)
     else:
         msg.fail(f"Strategy '{strategy}' is not implemented!", exits=1)

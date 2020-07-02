@@ -98,8 +98,8 @@ def test_10_step(ray_start_3_cpus):  # noqa: F811
 
 
 def test_full_path(ray_start_3_cpus):
-    tmpfile = tempfile.NamedTemporaryFile(delete=False)
-    tmpfile.write(TEST_CONFIG_STR)
+    with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
+        tmpfile.write(TEST_CONFIG_STR)
     optimizer = RayOptimizer(tmpfile.name, use_gpu=False, world_size=1)
 
     config = util.load_config(tmpfile.name, create_objects=True)
@@ -111,6 +111,7 @@ def test_full_path(ray_start_3_cpus):
         if hasattr(proc, "model"):
             proc.model.finish_update(optimizer)
 
+
 def test_gpu_allreduce(ray_start_2_gpus):
-    pass
+    distributed_setup_and_train(use_gpu, num_workers=2, strategy="allreduce")
 

@@ -1,11 +1,11 @@
 import asyncio
 import ray
 import os
-import itertools
 import tqdm
 
 from wasabi import msg
 from spacy import util
+from thinc.api import require_gpu
 from spacy.cli.train import train
 from spacy_ray.param_server import RayOptimizer, RAY_PS_WORKER_GPU_RESERVE
 
@@ -22,11 +22,12 @@ class ProgressReporter:
     def update(self):
         self.updated.set()
 
+
 def setup_and_train(use_gpu, train_args, rank):
     if use_gpu >= 0:
         gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES")
         msg.info(f"Using GPU (isolated): {gpu_id}")
-        util.use_gpu(0)
+        require_gpu(0)
     else:
         msg.info("Using CPU")
     train_args["disable_tqdm"] = True

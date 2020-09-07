@@ -7,7 +7,7 @@ from spacy.cli.train import create_train_batches, create_evaluation_callback
 from spacy.cli.train import setup_printer, update_meta
 from spacy import util
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory
-from .thinc_remote_params import RayHeadProxy, RayChildProxy
+from .thinc_remote_params import RayProxy
 
 
 class Worker:
@@ -22,7 +22,7 @@ class Worker:
 
     def get_optimizer(self):
         return self.config["training"]["optimizer"]
-    
+
     def get_corpus(self):
         return self.config["training"]["train_corpus"]
 
@@ -50,7 +50,7 @@ class Worker:
             self.config["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
             self.config["training"]["max_epochs"],
-            self.rank
+            self.rank,
         )
 
         training_step_iterator = train_while_improving(
@@ -81,7 +81,7 @@ class Worker:
                 self.nlp,
                 self.config["training"]["optimizer"],
                 self.corpus,
-                self.config["training"]
+                self.config["training"],
             )
         return self._evaluation_callback()
 
@@ -119,11 +119,13 @@ class Worker:
         frozen_components = config["training"]["frozen_components"]
         # Sourced components that require resume_training
         sourced_components = get_sourced_components(config)
-        resume_components = [p for p in sourced_components if p not in frozen_components]
+        resume_components = [
+            p for p in sourced_components if p not in frozen_components
+        ]
         if resume_components:
             with nlp.select_pipes(enable=resume_components):
                 nlp.resume_training(sgd=optimizer)
- 
+
         corpus = self.get_corpus()
         train_examples = list(
             corpus.train_dataset(
@@ -147,15 +149,7 @@ class Worker:
             raise NotImplementedError
 
     def _set_params_proxies(self, nlp, conn):
-        if self.rank == 0:
-            proxy = RayHeadProxy(
-                conn,
-                self.get_optimizer(),
-                self.get_quorum(),
-                ray=ray
-            )
-        else:
-            proxy = RayChildProxy(conn)
+        proxy = RayProxy(conn, self.get_optimizer(), self.get_quorum(), ray=ray)
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
                 component.model.set_params_proxy(proxy)
@@ -172,11 +166,11 @@ class FakeOptimizer:
 
     def step_schedules(self):
         pass
-        #ray.get(self._futures)
-        #self._futures = []
-        #if self.worker_id == 0:
+        # ray.get(self._futures)
+        # self._futures = []
+        # if self.worker_id == 0:
         #    self._futures.append(self.conn.step_schedules.remote())
-        #self._futures.append(self.conn.inc_progress.remote(self.worker_id))
+        # self._futures.append(self.conn.inc_progress.remote(self.worker_id))
 
 
 class Evaluater:
@@ -186,6 +180,7 @@ class Evaluater:
     while the other workers should retrieve them (using a wait-loop if
     necessary).
     """
+
     def __init__(self):
         self.scores = []
 

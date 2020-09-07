@@ -15,6 +15,7 @@ KeyT = Tuple[int, str]
 def make_key(model_id: int, name: str) -> Tuple[int, str]:
     return (model_id, name)
 
+
 class Timer:
     def __init__(self, state):
         self.state = state
@@ -40,21 +41,22 @@ class ManyTimer:
             self.timers[key] = Timer(key)
         return self.timers[key]
 
+
 def thread_function(next_params, ray_, conn, poll):
     _last_update = 0
     while True:
         time.sleep(poll)
-        updates = ray_.get(
-            conn.get_updated_params.remote(_last_update)
-        )
+        updates = ray_.get(conn.get_updated_params.remote(_last_update))
         new_time = timer()
         _last_update = new_time
         next_params.update(updates)
+
 
 class RayProxy:
     """Proxy for the 'head' worker that owns the optimizer and pushes
     parameter updates.
     """
+
     ray: Any
     conn: Any
     _params: Dict
@@ -63,7 +65,7 @@ class RayProxy:
 
     def __init__(self, connection, *, ray=None, use_thread=False, poll_every=0.5):
         if ray is None:
-            import ray # type: ignore
+            import ray  # type: ignore
         # Pass in 'ray' so that we can test with a mock object.
         self.ray = ray
         # This 'connection' object will usually be a ray remote.
@@ -77,28 +79,16 @@ class RayProxy:
         self.timers = ManyTimer()
         self.use_thread = use_thread
         if self.use_thread:
-            args = (
-                self._next_params,
-                self.ray,
-                self.conn,
-                self._poll_every
-            )
+            args = (self._next_params, self.ray, self.conn, self._poll_every)
             self.thread = threading.Thread(
-                target=thread_function,
-                args=args,
-                daemon=True
+                target=thread_function, args=args, daemon=True
             )
 
     def set_param(self, model_id: int, name: str, value: FloatsXd) -> None:
         """Set a parameter to the connection."""
         key = make_key(model_id, name)
         self._params[key] = value
-        self._versions[key] = self.ray.get(
-            self.conn.set_param.remote(
-                key,
-                value
-            )
-        )
+        self._versions[key] = self.ray.get(self.conn.set_param.remote(key, value))
 
     def get_param(self, model_id: int, name: str) -> FloatsXd:
         """Get a parameter from the connection."""
@@ -112,31 +102,21 @@ class RayProxy:
         """Set a gradient to the connection."""
         key = make_key(model_id, name)
         self._grad_futures[key].append(
-            self.conn.set_grad.remote(
-                key,
-                self._versions[key],
-                value
-            )
+            self.conn.set_grad.remote(key, self._versions[key], value)
         )
 
     def inc_grad(self, model_id: int, name: str, value: FloatsXd) -> None:
         """Increment a gradient to the connection."""
         key = make_key(model_id, name)
         self._grad_futures[key].append(
-            self.conn.inc_grad.remote(
-                key,
-                self._versions[key],
-                value
-            )
+            self.conn.inc_grad.remote(key, self._versions[key], value)
         )
 
     def _refresh_nexts(self):
         self._await_grads()
         now_time = timer()
         self._next_params.update(
-            self.ray.get(
-                self.conn.get_updated_params.remote(self._last_update)
-            )
+            self.ray.get(self.conn.get_updated_params.remote(self._last_update))
         )
         self._last_update = now_time
 
@@ -146,7 +126,7 @@ class RayProxy:
             futures.extend(g)
         self.ray.get(futures)
         self._grad_futures = defaultdict(list)
-        
+
     def _maybe_update_param(self, key):
         if key in self._next_params:
             self._versions[key], self._params[key] = self._next_params.pop(key)
@@ -173,6 +153,7 @@ class RayProxy:
 
 ObjectID = int
 
+
 @dataclass
 class ParamData:
     key: Tuple[int, str]
@@ -187,6 +168,7 @@ class SharedOptimizer:
     """Provide access to an optimizer for multiple workers. Designed to be
     used as a ray remote actor, connected to a ParamServer via RayProxy.
     """
+
     def __init__(self, optimizer, quorum, ray=None):
         if ray is None:
             import ray
@@ -237,8 +219,7 @@ class SharedOptimizer:
             return (self._params[key].version, self._params[key].value)
 
     def get_updated_params(self, since: float) -> Dict:
-        """Return a dict with params that have changed since a given timestamp.
-        """
+        """Return a dict with params that have changed since a given timestamp."""
         updates = {}
         for key, p in self._params.items():
             if p.timestamp >= since:
@@ -257,7 +238,7 @@ class SharedOptimizer:
                 version=version,
                 grads=None,
                 grad_count=0,
-                timestamp=timer()
+                timestamp=timer(),
             )
             return self._params[key].version
 
@@ -298,9 +279,7 @@ class SharedOptimizer:
             # The optimizer call changes internal state, so we need to worry
             # about concurrency on it.
             params, _ = self.optimizer(
-                key,
-                self._params[key].value.copy(),
-                self._params[key].grads
+                key, self._params[key].value.copy(), self._params[key].grads
             )
             new_param = ParamData(
                 key=key,
@@ -308,7 +287,7 @@ class SharedOptimizer:
                 version=self._params[key].version + 1,
                 grads=None,
                 grad_count=0,
-                timestamp=timer()
+                timestamp=timer(),
             )
             self._params[key] = new_param
             self._n_updates += 1

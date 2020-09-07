@@ -11,7 +11,6 @@ from .worker import Worker, Evaluater
 from .thinc_remote_params import SharedOptimizer
 
 
-
 @app.command("ray-train")
 def ray_train_cli(
     # fmt: off
@@ -44,9 +43,13 @@ def distributed_setup_and_train(config, use_gpu, num_workers, ray_address):
         for rank in range(num_workers)
     ]
     evaluater = ray.remote(Evaluater).remote()
-    conn = ray.remote(SharedOptimizer).options(num_gpus=0).remote(
-        ray.get(workers[0].get_optimizer.remote()),
-        ray.get(workers[0].get_quorum.remote())
+    conn = (
+        ray.remote(SharedOptimizer)
+        .options(num_gpus=0)
+        .remote(
+            ray.get(workers[0].get_optimizer.remote()),
+            ray.get(workers[0].get_quorum.remote()),
+        )
     )
     futures = []
     for i, w in enumerate(workers):

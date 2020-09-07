@@ -1,11 +1,9 @@
 from typing import Dict, Tuple, Any
 from timeit import default_timer as timer
-import threading
 from dataclasses import dataclass
 from collections import Counter, defaultdict
 import time
 import threading
-from collections import UserDict
 from ..types import FloatsXd
 
 

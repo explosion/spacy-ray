@@ -1,26 +1,30 @@
+import time
+import os
+import ray
 from spacy.cli._util import get_sourced_components
-from spacy.cli.train import load_nlp_and_config, msg, train_while_improving
+from spacy.cli.train import msg, train_while_improving, load_from_paths
 from spacy.cli.train import create_train_batches, create_evaluation_callback
-from spacy.cli.train import setup_printer
+from spacy.cli.train import setup_printer, update_meta
+from spacy import util
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory
-from .thinc_remote_params import RayHeadProxy, RayChildProxy, SharedParams
+from .thinc_remote_params import RayHeadProxy, RayChildProxy
 
 
 class Worker:
-    def __init__(self, rank, num_workers, use_gpu, config_path, config_overrides):
+    def __init__(self, rank, num_workers, use_gpu, config):
         self.rank = rank
         self.num_workers = num_workers
         self.gpu_id = self._resolve_gpu(use_gpu)
-        self.output_path = output_path
-        # Use original config here before it's resolved to functions
-        sourced_components = get_sourced_components(config)
-        self.nlp, self.config = self._load_nlp_and_config(config_path, config_overrides)
+        self.nlp, self.config = self._load_nlp_and_config(config)
         self._initialize_models(self.nlp, self.config)
         self._evaluation_callback = None
         self._results = []
 
     def get_optimizer(self):
         return self.config["training"]["optimizer"]
+    
+    def get_corpus(self):
+        return self.config["training"]["train_corpus"]
 
     def get_quorum(self):
         # Default to setting the 'quorum' to be the number of workers multiplied
@@ -43,7 +47,7 @@ class Worker:
 
         self._set_params_proxies(self.nlp, conn)
         train_batches = create_train_batches(
-            self.config["train_corpus"](nlp),
+            self.config["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
             self.config["training"]["max_epochs"],
             self.rank
@@ -98,12 +102,9 @@ class Worker:
             gpu_id = -1
         return gpu_id
 
-    def _load_nlp_and_config(self, config_path: Path, config_overrides):
-        config = util.load_config(
-            config_path, overrides=config_overrides, interpolate=True
-        )
+    def _load_nlp_and_config(self, config):
         if config.get("training", {}).get("seed") is not None:
-            fix_random_seed(config["training"]["seed"])
+            util.fix_random_seed(config["training"]["seed"])
         if config.get("system", {}).get("use_pytorch_for_gpu_memory"):
             # It feels kind of weird to not have a default for this.
             use_pytorch_for_gpu_memory()
@@ -117,11 +118,13 @@ class Worker:
         # Components that shouldn't be updated during training
         frozen_components = config["training"]["frozen_components"]
         # Sourced components that require resume_training
+        sourced_components = get_sourced_components(config)
         resume_components = [p for p in sourced_components if p not in frozen_components]
         if resume_components:
             with nlp.select_pipes(enable=resume_components):
                 nlp.resume_training(sgd=optimizer)
  
+        corpus = self.get_corpus()
         train_examples = list(
             corpus.train_dataset(
                 nlp,

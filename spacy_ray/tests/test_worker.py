@@ -9,6 +9,7 @@ from ..worker import Worker
 # I think of what could be meaningfully tested this way. Maybe I'll delete it
 # all in the end.
 
+
 class TestWorker(Worker):
     def _load_nlp_and_config(self, config):
         return None, None

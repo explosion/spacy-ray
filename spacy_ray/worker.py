@@ -16,6 +16,7 @@ from .thinc_remote_params import RayProxy, set_params_proxy
 
 class Worker:
     """Actor class for parallel training."""
+
     rank: int
     num_workers: int
     gpu_id: int
@@ -27,15 +28,16 @@ class Worker:
     def __init__(
         self,
         config: Config,
-        rank: int=0,
-        num_workers: int=1,
-        use_gpu: int=0,
-        ray=None
+        rank: int = 0,
+        num_workers: int = 1,
+        use_gpu: int = 0,
+        ray=None,
     ):
         if ray is None:
             # Avoid importing ray in the module. This allows a test-ray to
             # be passed in, and speeds up the CLI.
-            import ray # type: ignore
+            import ray  # type: ignore
+
             self.ray = ray
         self.rank = rank
         self.num_workers = num_workers
@@ -92,7 +94,7 @@ class Worker:
             max_steps=self.config["training"].get("max_steps", 0),
             eval_frequency=self.config["training"]["eval_frequency"],
             raw_text=None,
-            exclude=[]
+            exclude=[],
         )
         if self.rank == 0:
             print_row, finalize_logger = self.config["training"]["logger"](self.nlp)

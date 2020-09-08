@@ -22,6 +22,7 @@ class SharedOptimizer:
     """Provide access to an optimizer for multiple workers. Designed to be
     used as a ray remote actor, connected to a ParamServer via RayProxy.
     """
+
     ray: Any
     quorum: int
     optimizer: Optimizer
@@ -31,10 +32,10 @@ class SharedOptimizer:
     _n_kept: int
     _n_dropped: int
     _n_updates: int
-    
+
     def __init__(self, optimizer: Optimizer, quorum: int, ray=None):
         if ray is None:
-            import ray # type: ignore
+            import ray  # type: ignore
         self.ray = ray
         self.quorum = quorum
         self.optimizer = optimizer
@@ -73,7 +74,9 @@ class SharedOptimizer:
         else:
             return self._n_dropped / total
 
-    def get_param_if_updated(self, key: KeyT, version: int) -> Optional[Tuple[int, FloatsXd]]:
+    def get_param_if_updated(
+        self, key: KeyT, version: int
+    ) -> Optional[Tuple[int, FloatsXd]]:
         if key not in self._params:
             raise KeyError("wat")
         elif self._params[key].version == version:
@@ -142,9 +145,7 @@ class SharedOptimizer:
             grads = cast(FloatsXd, self._params[key].grads)
             # The optimizer call changes internal state, so we need to worry
             # about concurrency on it.
-            params, _ = self.optimizer(
-                key, self._params[key].value.copy(), grads
-            )
+            params, _ = self.optimizer(key, self._params[key].value.copy(), grads)
             new_param = ParamData(
                 key=key,
                 value=params,

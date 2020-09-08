@@ -1,1 +1,1 @@
-from . import train_cli # noqa
+from . import train_cli  # noqa

@@ -22,12 +22,9 @@ Opt = typer.Option
 CLI = typer.Typer(name="ray", help=RAY_HELP, no_args_is_help=True)
 spacy.cli._util.app.add_typer(CLI)
 
+
 @CLI.command(
-    "train",
-    context_settings={
-        "allow_extra_args": True,
-        "ignore_unknown_options": True
-    }
+    "train", context_settings={"allow_extra_args": True, "ignore_unknown_options": True}
 )
 def ray_train_cli(
     # fmt: off

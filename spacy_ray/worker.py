@@ -72,6 +72,7 @@ class Worker:
             print_row, finalize_logger = self.config["training"]["logger"](self.nlp)
         for batch, info, is_best_checkpoint in training_step_iterator:
             if self.rank == 0 and is_best_checkpoint is not None:
+                print(info)
                 info["words"] *= self.num_workers
                 print_row(info)
 

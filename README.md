@@ -4,6 +4,14 @@
 # Set up the data. Downloads a small NER file and runs spacy convert.
 ./bin/get-data.sh
 
-# Run the training on CPU. Use -g 0 for GPU 0. --help should give more usage.
-python -m spacy train examples/fashion-ner/training.json examples/fashion-ner/eval.json examples/fashion-ner ner-cnn.cfg
+# This doesn't quite work yet (we need to set up an entry-point to make
+# the import), but once the packaging is done you'll be able to do:
+pip install spacy-ray
+spacy ray train ...
+# We should add the following commands as well:
+spacy ray pretrain ...
+spacy ray parse ...
+spacy ray evaluate ...
 ```
+
+All of the code for the integration can stay in this package, we don't need to add anything to spaCy or Thinc.

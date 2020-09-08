@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from timeit import default_timer as timer
-from collections import defaultdict
+from collections import defaultdict, Counter
 import time
 import threading
 from thinc.types import FloatsXd

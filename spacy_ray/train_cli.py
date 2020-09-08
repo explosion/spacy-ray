@@ -59,14 +59,7 @@ def distributed_setup_and_train(config, use_gpu, num_workers, ray_address, ray=N
         for rank in range(num_workers)
     ]
     evaluater = ray.remote(Evaluater).remote()
-    conn = (
-        ray.remote(SharedOptimizer)
-        .options(num_gpus=0)
-        .remote(
-            ray.get(workers[0].get_optimizer.remote()),
-            ray.get(workers[0].get_quorum.remote()),
-        )
-    )
+    conn = ray.remote(SharedParams).options(num_gpus=0).remote()
     futures = []
     for i, w in enumerate(workers):
         futures.append(w.train.remote(use_gpu, conn, evaluater))

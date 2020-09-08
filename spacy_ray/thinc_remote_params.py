@@ -18,8 +18,8 @@ def thread_function(next_params, ray, conn, poll):
 
 
 class RayProxy:
-    """Proxy for the 'head' worker that owns the optimizer and pushes
-    parameter updates.
+    """Proxy for the workers that don't own an optimizer. Requires
+    SharedOptimizer to be used.
     """
 
     ray: Any
@@ -114,3 +114,197 @@ class RayProxy:
         for key, (version, param) in params.items():
             self._params[key] = param
             self._versions[key] = version
+
+
+class RayChildProxy:
+    def __init__(self, connection, *, ray=None):
+        if ray is None:
+            import ray
+        # Pass in 'ray' so that we can test with a mock object.
+        self.ray = ray
+        # This 'connection' object will usually be a ray remote.
+        self.conn = connection
+        self._param_versions = {}
+
+    def get_param(self, model_id: int, name: str):
+        """Get a parameter from the connection."""
+        key = (model_id, name)
+        version, param_id = self.ray.get(self.conn.get_param.remote(model_id, name))
+        self._param_versions[key] = version
+        return self._decode_pointer(param_id)
+
+    def set_param(self, model_id: int, name: str, value):
+        """Child proxies don't set parameters, so this is a noop."""
+        pass
+
+    def set_grad(self, model_id: int, name: str, value):
+        """Child proxies don't set gradients, so this is a noop."""
+        pass
+
+    def inc_grad(self, model_id: int, name: str, value):
+        """Increment a gradient to the connection."""
+        key = (model_id, name)
+        version = self._param_versions[key]
+        grad_count = self.ray.get(
+            self.conn.get_grad_count.remote(
+                version,
+                model_id,
+                name
+            )
+        )
+        if grad_count is None:
+            return
+        elif grad_count == 0:
+            self.ray.get(
+                self.conn.set_grad.remote(
+                    version,
+                    model_id,
+                    name,
+                    self._encode_pointer(value),
+                    1
+                )
+            )
+        else:
+            remote_grad = self._decode_pointer(
+                self.ray.get(
+                    self.conn.get_grad.remote(
+                        version, model_id, name
+                    )
+                )
+            )
+            if remote_grad is not None:
+                value += remote_grad
+            self.ray.get(
+                self.conn.set_grad.remote(
+                    version,
+                    model_id,
+                    name,
+                    self._encode_pointer(value),
+                    grad_count + 1
+                )
+            )
+
+    def _encode_pointer(self, value):
+        if value is None:
+            return None
+        else:
+            return [self.ray.put(value)]
+
+    def _decode_pointer(self, value):
+        if value is None:
+            return None
+        else:
+            return self.ray.get(value)[0]
+
+    def _wait_key(self, key):
+        """Await any futures for a given key."""
+        self.ray.get(self._futures.get(key, []))
+        self._futures[key] = []
+
+class RayHeadProxy:
+    """Proxy for the 'head' worker that owns the optimizer and pushes
+    parameter updates.
+    """
+    def __init__(self, connection, optimizer, quorum, *, ray=None):
+        if ray is None:
+            import ray
+        # Pass in 'ray' so that we can test with a mock object.
+        self.ray = ray
+        # This 'connection' object will usually be a ray remote.
+        self.conn = connection
+        self.optimizer = optimizer
+        self.quorum = quorum
+        self._param_versions = Counter()
+        self._params = {}
+        self._futures = defaultdict(list)
+
+    def get_param(self, model_id: int, name: str):
+        """Get a parameter from the connection."""
+        key = (model_id, name)
+        return self._params[key]
+
+    def set_param(self, model_id: int, name: str, value):
+        """Set a parameter to the connection."""
+        key = (model_id, name)
+        self._params[key] = value
+        self._param_versions[key] += 1
+        version = self._param_versions[key]
+        self.conn.set_param.remote(
+            version,
+            model_id,
+            name,
+            self._encode_pointer(value)
+        )
+
+    def set_grad(self, model_id: int, name: str, value):
+        """Set a gradient to the connection."""
+        key = (model_id, name)
+        version = self._param_versions[key]
+        self.conn.set_grad.remote(
+            version,
+            model_id,
+            name,
+            self._encode_pointer(value),
+            1
+        )
+
+    def inc_grad(self, model_id: int, name: str, value):
+        """Increment a gradient to the connection."""
+        key = (model_id, name)
+        param = self._params[key]
+        version = self._param_versions[key]
+        grad_count = self.ray.get(
+            self.conn.get_grad_count.remote(
+                version,
+                model_id,
+                name,
+            )
+        )
+        if grad_count is None:
+            raise ValueError("Gradient marked stale for head. Shouldn't happen?")
+        else:
+            if grad_count != 0:
+                remote_grad = self._decode_pointer(
+                    self.ray.get(
+                        self.conn.get_grad.remote(
+                            version,
+                            model_id,
+                            name,
+                        )
+                    )
+                )
+                if remote_grad is not None:
+                    value += remote_grad
+
+            if (grad_count + 1) >= self.quorum:
+                param, _ = self.optimizer(key, param, value)
+                self._params[key] = param
+                self._param_versions[key] = version + 1
+                self.conn.set_param.remote(
+                    version+1,
+                    model_id,
+                    name,
+                    self._encode_pointer(param)
+                )
+            else:
+                self.conn.set_grad.remote(
+                    version,
+                    model_id,
+                    name,
+                    self._encode_pointer(value),
+                    grad_count + 1
+                )
+
+    def step_schedules(self):
+        self.optimizer.step_schedules()
+
+    def _encode_pointer(self, value):
+        return [self.ray.put(value)]
+
+    def _decode_pointer(self, value):
+        if value is None:
+            return None
+        else:
+            return self.ray.get(value)[0]
+
+

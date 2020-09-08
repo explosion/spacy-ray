@@ -11,7 +11,7 @@ from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
-from .thinc_remote_params import RayProxy
+from .thinc_remote_params import RayHeadProxy, RayChildProxy
 from .util import set_params_proxy
 
 
@@ -171,7 +171,16 @@ class Worker:
             raise NotImplementedError
 
     def _set_params_proxies(self, nlp: Language, conn) -> None:
-        proxy = RayProxy(conn, ray=self.ray)
+        if self.rank == 0:
+            proxy = RayHeadProxy(
+                conn,
+                self.get_optimizer(),
+                self.get_quorum(),
+                ray=self.ray
+            ) # type: ignore
+        else:
+            proxy = RayChildProxy(conn) # type: ignore
+ 
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
                 set_params_proxy(component.model, proxy)
@@ -185,7 +194,12 @@ class FakeOptimizer:
         self.averages = {}
 
     def __call__(self, key, weights, gradient):
-        raise ValueError("Should not be called?")
+        # This shouldn't be called, because when we have the parameter proxy
+        # installed, the gradients should never appear, and the `has_grad`
+        # check in `model.finish_update` should return False.
+        # However, it's difficult to guarantee that for all subclasses and shims
+        # so it's safer to noop instead of raising.
+        pass
 
     def step_schedules(self):
         pass

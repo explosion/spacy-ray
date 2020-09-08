@@ -9,8 +9,9 @@ import ml_datasets
 from wasabi import msg
 from tqdm import tqdm
 import typer
-from spacy_ray.thinc_remote_params import RayProxy, SharedOptimizer
-from spacy_ray.thinc_remote_params import set_params_proxy
+from spacy_ray.thinc_remote_params import RayProxy
+from spacy_ray.thinc_shared_optimizer import SharedOptimizer
+from spacy_ray.util import set_params_proxy
 import ray
 
 class Timer:

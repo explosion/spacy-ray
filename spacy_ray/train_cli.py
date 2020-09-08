@@ -1,6 +1,5 @@
 import typer
 import logging
-import ray
 from pathlib import Path
 from spacy import util
 from typing import Optional
@@ -49,7 +48,9 @@ def ray_train_cli(
     distributed_setup_and_train(config, use_gpu, num_workers, ray_address)
 
 
-def distributed_setup_and_train(config, use_gpu, num_workers, ray_address):
+def distributed_setup_and_train(config, use_gpu, num_workers, ray_address, ray=None):
+    if ray is None:
+        import ray
     if ray_address:
         ray.init(address=ray_address)
     else:

@@ -1,6 +1,5 @@
 import time
 import os
-import ray
 from spacy.cli._util import get_sourced_components
 from spacy.cli.train import msg, train_while_improving, load_from_paths
 from spacy.cli.train import create_train_batches, create_evaluation_callback
@@ -11,7 +10,10 @@ from .thinc_remote_params import RayProxy, set_params_proxy
 
 
 class Worker:
-    def __init__(self, rank, num_workers, use_gpu, config):
+    def __init__(self, rank, num_workers, use_gpu, config, ray=None):
+        if ray is None:
+            import ray
+            self.ray = ray
         self.rank = rank
         self.num_workers = num_workers
         self.gpu_id = self._resolve_gpu(use_gpu)
@@ -39,13 +41,13 @@ class Worker:
         def evaluate():
             if self.rank == 0:
                 scores = self.evaluate()
-                ray.get(evaluater.set_scores.remote(scores))
+                self.ray.get(evaluater.set_scores.remote(scores))
                 return scores
             else:
                 scores = None
                 while scores is None:
                     time.sleep(5)
-                    scores = ray.get(evaluater.get_scores.remote())
+                    scores = self.ray.get(evaluater.get_scores.remote())
                 return scores
 
         self._set_params_proxies(self.nlp, conn)
@@ -141,7 +143,7 @@ class Worker:
             raise NotImplementedError
 
     def _set_params_proxies(self, nlp, conn):
-        proxy = RayProxy(conn, ray=ray)
+        proxy = RayProxy(conn, ray=self.ray)
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
                 set_params_proxy(component.model, proxy)

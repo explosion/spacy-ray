@@ -19,3 +19,4 @@ class TestWorker(Worker):
 
 def test_worker_init():
     worker = TestWorker({}, rank=1, num_workers=2, use_gpu=-1, ray=mock_ray)
+    assert worker.nlp is None

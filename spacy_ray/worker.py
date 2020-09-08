@@ -1,7 +1,7 @@
 import time
 import os
 from pathlib import Path
-from typing import Optional, List, Tuple, Dict, Union, Callable, Any
+from typing import List, Tuple, Dict, Union, Any
 from thinc.config import Config
 from spacy.cli._util import get_sourced_components
 from spacy.cli.train import msg, train_while_improving, load_from_paths

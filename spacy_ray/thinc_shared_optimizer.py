@@ -1,12 +1,11 @@
 from typing import Dict, Tuple, Any, Optional, cast
 from dataclasses import dataclass
-from collections import Counter, defaultdict
-import time
+from collections import Counter
 import threading
 from timeit import default_timer as timer
 from thinc.types import FloatsXd
 from thinc.api import Optimizer
-from .util import set_params_proxy, Timer, ManyTimer, KeyT, make_key
+from .util import KeyT
 
 
 @dataclass

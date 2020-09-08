@@ -7,9 +7,9 @@ from spacy.cli.train import import_code, parse_config_overrides
 import spacy.cli._util
 
 from .worker import Worker, Evaluater
-from .thinc_remote_params import SharedOptimizer
+from .thinc_shared_optimizer import SharedOptimizer
 
-RAY_HELP = f"""Command-line interface for parallel and distributed computing via
+RAY_HELP = """Command-line interface for parallel and distributed computing via
 Ray. Assumes ray is installed and that the cluster is initialized. See the
 Ray documentation for details: https://ray.io.
 """

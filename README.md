@@ -1,17 +1,12 @@
-# spacy train example
+# spacy ray command
+
+This repo contains the work in progress on the Ray integration for spaCy v3. You'll be able to install this package:
 
 ```
-# Set up the data. Downloads a small NER file and runs spacy convert.
-./bin/get-data.sh
-
-# This doesn't quite work yet (we need to set up an entry-point to make
-# the import), but once the packaging is done you'll be able to do:
 pip install spacy-ray
-spacy ray train ...
-# We should add the following commands as well:
-spacy ray pretrain ...
-spacy ray parse ...
-spacy ray evaluate ...
 ```
 
-All of the code for the integration can stay in this package, we don't need to add anything to spaCy or Thinc.
+Which will add the `spacy ray` commands to your spaCy CLI. The main command will be `spacy ray train` for 
+parallel and distributed training, but we expect to add `spacy ray pretrain` and `spacy ray parse` as well.
+
+All of the code for the integration will be in this package, we don't need to add anything to spaCy or Thinc.

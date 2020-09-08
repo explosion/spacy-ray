@@ -5,13 +5,18 @@ from pathlib import Path
 from spacy import util
 from typing import Optional
 from spacy.cli.train import import_code, parse_config_overrides
-from spacy.cli._app import app, Arg, Opt
+from spacy.cli._util import app, Arg, Opt
 
 from .worker import Worker, Evaluater
 from .thinc_remote_params import SharedOptimizer
 
-
-@app.command("ray-train")
+@app.command(
+    "ray-train",
+    context_settings={
+        "allow_extra_args": True,
+        "ignore_unknown_options": True
+    }
+)
 def ray_train_cli(
     # fmt: off
     ctx: typer.Context, # This is only used to read additional arguments
@@ -28,11 +33,11 @@ def ray_train_cli(
     config = util.load_config(
         config_path, overrides=parse_config_overrides(ctx.args), interpolate=True
     )
-    distributed_setup_and_train(config, ray_address, use_gpu, num_workers)
+    distributed_setup_and_train(config, use_gpu, num_workers, ray_address)
 
 
 def distributed_setup_and_train(config, use_gpu, num_workers, ray_address):
-    if ray_address is not None:
+    if ray_address:
         ray.init(address=ray_address)
     else:
         ray.init(ignore_reinit_error=True)

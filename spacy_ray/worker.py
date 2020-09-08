@@ -4,7 +4,7 @@ import ray
 from spacy.cli._util import get_sourced_components
 from spacy.cli.train import msg, train_while_improving, load_from_paths
 from spacy.cli.train import create_train_batches, create_evaluation_callback
-from spacy.cli.train import setup_printer, update_meta
+from spacy.cli.train import update_meta
 from spacy import util
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory
 from .thinc_remote_params import RayProxy, set_params_proxy
@@ -25,6 +25,9 @@ class Worker:
 
     def get_corpus(self):
         return self.config["training"]["train_corpus"]
+
+    def get_dev_corpus(self):
+        return self.config["training"]["dev_corpus"]
 
     def get_quorum(self):
         # Default to setting the 'quorum' to be the number of workers multiplied
@@ -47,10 +50,9 @@ class Worker:
 
         self._set_params_proxies(self.nlp, conn)
         train_batches = create_train_batches(
-            self.config["train_corpus"](self.nlp),
+            self.config["training"]["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
             self.config["training"]["max_epochs"],
-            self.rank,
         )
 
         training_step_iterator = train_while_improving(
@@ -64,24 +66,21 @@ class Worker:
             max_steps=self.config["training"].get("max_steps", 0),
             eval_frequency=self.config["training"]["eval_frequency"],
             raw_text=None,
+            exclude=[]
         )
         if self.rank == 0:
-            print_row = setup_printer(self.config["training"], self.nlp.pipe_names)
-        output_path = self.output_path
+            print_row, finalize_logger = self.config["training"]["logger"](self.nlp)
         for batch, info, is_best_checkpoint in training_step_iterator:
             if self.rank == 0 and is_best_checkpoint is not None:
                 info["words"] *= self.num_workers
                 print_row(info)
-                if is_best_checkpoint and output_path is not None:
-                    self.save_checkpoint(info, output_path / "model-best")
 
     def evaluate(self):
         if self._evaluation_callback is None:
             self._evaluation_callback = create_evaluation_callback(
                 self.nlp,
-                self.config["training"]["optimizer"],
-                self.corpus,
-                self.config["training"],
+                self.get_dev_corpus(),
+                self.config["training"]["score_weights"],
             )
         return self._evaluation_callback()
 
@@ -113,7 +112,7 @@ class Worker:
             util.load_vectors_into_model(nlp, config["training"]["vectors"])
         return nlp, config
 
-    def _initialize_models(self, nlp, config, sourced_components):
+    def _initialize_models(self, nlp, config):
         optimizer = config["training"]["optimizer"]
         # Components that shouldn't be updated during training
         frozen_components = config["training"]["frozen_components"]
@@ -127,14 +126,7 @@ class Worker:
                 nlp.resume_training(sgd=optimizer)
 
         corpus = self.get_corpus()
-        train_examples = list(
-            corpus.train_dataset(
-                nlp,
-                shuffle=False,
-                gold_preproc=config["training"]["gold_preproc"],
-                max_length=config["training"]["max_length"],
-            )
-        )
+        train_examples = list(corpus(nlp))
         with nlp.select_pipes(disable=[*frozen_components, *resume_components]):
             nlp.begin_training(lambda: train_examples)
 
@@ -149,7 +141,7 @@ class Worker:
             raise NotImplementedError
 
     def _set_params_proxies(self, nlp, conn):
-        proxy = RayProxy(conn, self.get_optimizer(), self.get_quorum(), ray=ray)
+        proxy = RayProxy(conn, ray=ray)
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
                 set_params_proxy(component.model, proxy)
@@ -160,6 +152,7 @@ class FakeOptimizer:
         self.conn = conn
         self.worker_id = worker_id
         self._futures = []
+        self.averages = {}
 
     def __call__(self, key, weights, gradient):
         raise ValueError("Should not be called?")

@@ -199,7 +199,7 @@ class FakeOptimizer:
         # check in `model.finish_update` should return False.
         # However, it's difficult to guarantee that for all subclasses and shims
         # so it's safer to noop instead of raising.
-        pass
+        return weights, gradient
 
     def step_schedules(self):
         pass

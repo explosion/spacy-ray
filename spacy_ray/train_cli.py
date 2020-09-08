@@ -8,6 +8,7 @@ import spacy.cli._util
 
 from .worker import Worker, Evaluater
 from .thinc_shared_optimizer import SharedOptimizer
+from .thinc_shared_params import SharedParams
 
 RAY_HELP = """Command-line interface for parallel and distributed computing via
 Ray. Assumes ray is installed and that the cluster is initialized. See the
@@ -55,7 +56,7 @@ def distributed_setup_and_train(config, use_gpu, num_workers, ray_address, ray=N
 
     RemoteWorker = ray.remote(Worker).options(num_gpus=int(use_gpu >= 0), num_cpus=2)
     workers = [
-        RemoteWorker.remote(rank, num_workers, use_gpu, config)
+        RemoteWorker.remote(config, rank, num_workers, use_gpu)
         for rank in range(num_workers)
     ]
     evaluater = ray.remote(Evaluater).remote()

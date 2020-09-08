@@ -4,7 +4,8 @@ from dataclasses import dataclass
 from collections import Counter, defaultdict
 import time
 import threading
-from ..types import FloatsXd
+from thinc.types import FloatsXd
+from .util import set_params_proxy
 
 
 KeyT = Tuple[int, str]
@@ -27,7 +28,6 @@ class Timer:
     def __exit__(self, *args):
         interval = time.time() - self.start
         self.sum += interval
-        print(f"{self.state}: {self.sum / self.n:0.4f}")
 
 
 class ManyTimer:

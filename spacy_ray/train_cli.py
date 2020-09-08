@@ -5,13 +5,26 @@ from pathlib import Path
 from spacy import util
 from typing import Optional
 from spacy.cli.train import import_code, parse_config_overrides
-from spacy.cli._util import app, Arg, Opt
+import spacy.cli._util
 
 from .worker import Worker, Evaluater
 from .thinc_remote_params import SharedOptimizer
 
-@app.command(
-    "ray-train",
+RAY_HELP = f"""Command-line interface for parallel and distributed computing via
+Ray. Assumes ray is installed and that the cluster is initialized. See the
+Ray documentation for details: https://ray.io.
+"""
+# Wrappers for Typer's annotations. Initially created to set defaults and to
+# keep the names short, but not needed at the moment.
+Arg = typer.Argument
+Opt = typer.Option
+
+# Create our subcommand, and install it within spaCy's CLI.
+CLI = typer.Typer(name="ray", help=RAY_HELP, no_args_is_help=True)
+spacy.cli._util.app.add_typer(CLI)
+
+@CLI.command(
+    "train",
     context_settings={
         "allow_extra_args": True,
         "ignore_unknown_options": True

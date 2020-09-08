@@ -7,7 +7,7 @@ from spacy.cli.train import create_train_batches, create_evaluation_callback
 from spacy.cli.train import setup_printer, update_meta
 from spacy import util
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory
-from .thinc_remote_params import RayProxy
+from .thinc_remote_params import RayProxy, set_params_proxy
 
 
 class Worker:
@@ -152,7 +152,7 @@ class Worker:
         proxy = RayProxy(conn, self.get_optimizer(), self.get_quorum(), ray=ray)
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
-                component.model.set_params_proxy(proxy)
+                set_params_proxy(component.model, proxy)
 
 
 class FakeOptimizer:

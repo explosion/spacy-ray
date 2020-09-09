@@ -45,6 +45,7 @@ def ray_train_cli(
         config_path, overrides=parse_config_overrides(ctx.args), interpolate=True
     )
     import ray
+
     if ray_address:
         ray.init(address=ray_address)
     else:
@@ -68,10 +69,15 @@ def ray_train_cli(
 
 
 def get_shared_optimizer(ray, config, workers):
-    return ray.remote(SharedOptimizer).options(num_gpus=0).remote(
-        {"optimizer": config["training"]["optimizer"]},
-        ray.get(workers[0].get_quorum.remote())
+    return (
+        ray.remote(SharedOptimizer)
+        .options(num_gpus=0)
+        .remote(
+            {"optimizer": config["training"]["optimizer"]},
+            ray.get(workers[0].get_quorum.remote()),
+        )
     )
+
 
 def get_shared_params(ray, config, workers):
     return ray.remote(SharedParams).options(num_gpus=0).remote()

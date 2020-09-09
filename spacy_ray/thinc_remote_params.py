@@ -147,41 +147,25 @@ class RayChildProxy:
         key = (model_id, name)
         version = self._param_versions[key]
         grad_count = self.ray.get(
-            self.conn.get_grad_count.remote(
-                version,
-                model_id,
-                name
-            )
+            self.conn.get_grad_count.remote(version, model_id, name)
         )
         if grad_count is None:
             return
         elif grad_count == 0:
             self.ray.get(
                 self.conn.set_grad.remote(
-                    version,
-                    model_id,
-                    name,
-                    self._encode_pointer(value),
-                    1
+                    version, model_id, name, self._encode_pointer(value), 1
                 )
             )
         else:
             remote_grad = self._decode_pointer(
-                self.ray.get(
-                    self.conn.get_grad.remote(
-                        version, model_id, name
-                    )
-                )
+                self.ray.get(self.conn.get_grad.remote(version, model_id, name))
             )
             if remote_grad is not None:
                 value += remote_grad
             self.ray.get(
                 self.conn.set_grad.remote(
-                    version,
-                    model_id,
-                    name,
-                    self._encode_pointer(value),
-                    grad_count + 1
+                    version, model_id, name, self._encode_pointer(value), grad_count + 1
                 )
             )
 
@@ -202,10 +186,12 @@ class RayChildProxy:
         self.ray.get(self._futures.get(key, []))
         self._futures[key] = []
 
+
 class RayHeadProxy:
     """Proxy for the 'head' worker that owns the optimizer and pushes
     parameter updates.
     """
+
     def __init__(self, connection, optimizer, quorum, *, ray=None):
         if ray is None:
             import ray
@@ -230,23 +216,14 @@ class RayHeadProxy:
         self._params[key] = value
         self._param_versions[key] += 1
         version = self._param_versions[key]
-        self.conn.set_param.remote(
-            version,
-            model_id,
-            name,
-            self._encode_pointer(value)
-        )
+        self.conn.set_param.remote(version, model_id, name, self._encode_pointer(value))
 
     def set_grad(self, model_id: int, name: str, value):
         """Set a gradient to the connection."""
         key = (model_id, name)
         version = self._param_versions[key]
         self.conn.set_grad.remote(
-            version,
-            model_id,
-            name,
-            self._encode_pointer(value),
-            1
+            version, model_id, name, self._encode_pointer(value), 1
         )
 
     def inc_grad(self, model_id: int, name: str, value):
@@ -282,18 +259,11 @@ class RayHeadProxy:
                 self._params[key] = param
                 self._param_versions[key] = version + 1
                 self.conn.set_param.remote(
-                    version+1,
-                    model_id,
-                    name,
-                    self._encode_pointer(param)
+                    version + 1, model_id, name, self._encode_pointer(param)
                 )
             else:
                 self.conn.set_grad.remote(
-                    version,
-                    model_id,
-                    name,
-                    self._encode_pointer(value),
-                    grad_count + 1
+                    version, model_id, name, self._encode_pointer(value), grad_count + 1
                 )
 
     def step_schedules(self):
@@ -315,6 +285,7 @@ class RayPeerProxy:
     For parameters they do own, they pull gradients, make the update, and push
     parameters.
     """
+
     ray: Any
     conn: SharedParams
     _params: Dict[KeyT, FloatsXd]
@@ -322,7 +293,15 @@ class RayPeerProxy:
     _owned_keys: Set[KeyT]
     _grads: Dict
 
-    def __init__(self, connection, optimizer, keys: Iterable[KeyT], *, grads_per_update: int=2, ray=None):
+    def __init__(
+        self,
+        connection,
+        optimizer,
+        keys: Iterable[KeyT],
+        *,
+        grads_per_update: int = 2,
+        ray=None
+    ):
         if ray is None:
             import ray  # type: ignore
         # Pass in 'ray' so that we can test with a mock object.
@@ -357,9 +336,7 @@ class RayPeerProxy:
         if key in self._owned_keys:
             self._grads[key] = value
         else:
-            self.ray.get(
-                self.conn.set_grad.remote(key, self._versions[key], value)
-            )
+            self.ray.get(self.conn.set_grad.remote(key, self._versions[key], value))
 
     def inc_grad(self, model_id: int, name: str, value: FloatsXd) -> None:
         """Increment a gradient to the connection."""
@@ -370,9 +347,7 @@ class RayPeerProxy:
             else:
                 self._grads[key] += value
         else:
-            self.ray.get(
-                self.conn.inc_grad.remote(key, self._versions[key], value)
-            )
+            self.ray.get(self.conn.inc_grad.remote(key, self._versions[key], value))
         self._grad_counts[key] += 1
 
     def _maybe_update_param(self, key):
@@ -392,9 +367,7 @@ class RayPeerProxy:
             self._grad_counts[key] = 0
             return True
         else:
-            next_version, next_param = self.ray.get(
-                self.conn.get_param.remote(key)
-            )
+            next_version, next_param = self.ray.get(self.conn.get_param.remote(key))
             self._versions[key] = next_version
             self._params[key] = next_param
             return True

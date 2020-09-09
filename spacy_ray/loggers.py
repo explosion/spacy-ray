@@ -66,5 +66,3 @@ def ray_console_logger():
         return log_step, finalize
 
     return setup_printer
-
-

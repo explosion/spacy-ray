@@ -176,22 +176,16 @@ class Worker:
             proxy = RayProxy(conn, ray=self.ray, use_thread=True)
         elif strategy == "peer_params":
             proxy = RayPeerProxy(
-                conn,
-                self.get_optimizer(),
-                self.get_owned_keys(nlp),
-                ray=self.ray
+                conn, self.get_optimizer(), self.get_owned_keys(nlp), ray=self.ray
             )
         else:
             if self.rank == 0:
                 proxy = RayHeadProxy(
-                    conn,
-                    self.get_optimizer(),
-                    self.get_quorum(),
-                    ray=self.ray
-                ) # type: ignore
+                    conn, self.get_optimizer(), self.get_quorum(), ray=self.ray
+                )  # type: ignore
             else:
-                proxy = RayChildProxy(conn) # type: ignore
- 
+                proxy = RayChildProxy(conn)  # type: ignore
+
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
                 set_params_proxy(component.model, proxy)

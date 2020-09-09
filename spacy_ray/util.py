@@ -49,3 +49,14 @@ def set_params_proxy(model, proxy):
 
 def make_key(model_id: int, name: str) -> Tuple[int, str]:
     return (model_id, name)
+
+
+def divide_params(model, num_workers):
+    worker_keys = []
+    for rank in range(num_workers):
+        worker_keys.append([])
+        for node in model.walk():
+            if (node.id % num_workers) == rank:
+                for param_name in node.param_names:
+                    worker_keys[-1].append(make_key(node.id, param_name))
+    return worker_keys

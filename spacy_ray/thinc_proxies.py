@@ -308,6 +308,7 @@ class RayPeerProxy:
         self.ray = ray
         # This 'connection' object will usually be a ray remote.
         self.conn = connection
+        self.optimizer = optimizer
         self.grads_per_update = grads_per_update
         self._owned_keys = set(keys)
         self._params = {}
@@ -335,49 +336,46 @@ class RayPeerProxy:
         key = make_key(model_id, name)
         if key in self._owned_keys:
             self._grads[key] = value
+            self._grad_counts[key] = 1
         else:
-            self.ray.get(self.conn.set_grad.remote(key, self._versions[key], value))
+            self.conn.set_grad.remote(key, self._versions[key], value)
+            self._grad_counts[key] = 1
 
     def inc_grad(self, model_id: int, name: str, value: FloatsXd) -> None:
         """Increment a gradient to the connection."""
         key = make_key(model_id, name)
-        if key in self._owned_params:
+        self._grad_counts[key] += 1
+        if key in self._owned_keys:
             if self._grads.get(key) is None:
                 self._grads[key] = value
             else:
                 self._grads[key] += value
         else:
-            self.ray.get(self.conn.inc_grad.remote(key, self._versions[key], value))
-        self._grad_counts[key] += 1
+            self.conn.inc_grad.remote(key, self._versions[key], value, 1)
 
     def _maybe_update_param(self, key):
-        if self._grad_counts[key] < self.grads_per_update:
-            return False
-        elif key in self._owned_params:
+        if key in self._owned_keys:
+            if self._grad_counts[key] < self.grads_per_update:
+                return False
             remote_grad = self.ray.get(
                 self.conn.get_grad.remote(key, self._versions[key])
             )
-            self._grads[key] += remote_grad
-            next_param = self.optimizer(key, self._params[key], self._grads[key])
-            self._params[key] = next_param
+            if remote_grad:
+                self._grads[key] += remote_grad
+            param, _ = self.optimizer(key, self._params[key], self._grads[key])
+            self._params[key] = param
             self._versions[key] = self.ray.get(
-                self.conn.set_param.remote(key, next_param)
+                self.conn.set_param.remote(key, param)
             )
-            self._grads[key].fill(0)
+            self._grads[key] = None
             self._grad_counts[key] = 0
             return True
         else:
-            next_version, next_param = self.ray.get(self.conn.get_param.remote(key))
-            self._versions[key] = next_version
-            self._params[key] = next_param
-            return True
-
-    def _sync_params(self):
-        self._await_grads()
-        self._params = {}
-        self._versions = {}
-        self._next_params = {}
-        params = self.ray.get(self.conn.get_updated_params.remote(0))
-        for key, (version, param) in params.items():
-            self._params[key] = param
+            if key in self._params and self._grad_counts[key] < self.grads_per_update:
+                return False
+            version, param = self.ray.get(self.conn.get_param.remote(key))
             self._versions[key] = version
+            self._params[key] = param
+            self._grads[key] = None
+            self._grad_counts[key] = 0
+            return True

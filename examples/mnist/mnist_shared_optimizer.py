@@ -9,7 +9,7 @@ import ml_datasets
 from wasabi import msg
 from tqdm import tqdm
 import typer
-from spacy_ray.thinc_remote_params import RayProxy
+from spacy_ray.thinc_proxies import RayProxy
 from spacy_ray.thinc_shared_optimizer import SharedOptimizer
 from spacy_ray.util import set_params_proxy
 import ray
@@ -96,10 +96,15 @@ def main(
         quorum = n_workers
     batch_size //= n_workers
     ray.init()
-    optimizer = Adam(0.001)
+    optimizer_config = {
+        "optimizer": {
+            "@optimizers": "Adam.v1",
+            "learn_rate": 0.001
+        }
+    }
     workers = []
     RemoteOptimizer = ray.remote(SharedOptimizer)
-    conn = RemoteOptimizer.remote(optimizer, quorum)
+    conn = RemoteOptimizer.remote(optimizer_config, quorum)
     for i in range(n_workers):
         worker = Worker.remote(i, n_workers)
         ray.get(worker.add_model.remote(n_hidden, dropout))

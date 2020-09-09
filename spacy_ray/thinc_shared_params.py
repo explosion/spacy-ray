@@ -55,3 +55,15 @@ class SharedParams:
         else:
             self._grads[key] = value
             self._grad_counts[key] = grad_count
+
+    def inc_grad(self, tid, key, value, grad_count):
+        current_tid = self._transaction_ids.get(key)
+        if tid != current_tid:
+            # If we've moved past this version, discard the gradient.
+            return None
+        elif key not in self._grads:
+            self._grads[key] = value
+            self._grad_counts[key] = 0
+        else:
+            self._grads[key] += value
+            self._grad_counts[key] += grad_count

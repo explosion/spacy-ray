@@ -12,7 +12,7 @@ from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
 from .thinc_proxies import RayHeadProxy, RayChildProxy, RayProxy, RayPeerProxy
-from .util import set_params_proxy, make_key
+from .util import set_params_proxy, make_key, divide_params
 
 
 class Worker:
@@ -193,12 +193,9 @@ class Worker:
     def get_owned_keys(self):
         owned_keys = []
         for name, component in self.nlp.pipeline:
-            if not hasattr(component, "model"):
-                continue
-            for node in component.model.walk():
-                if (node.id % self.num_workers) == self.rank:
-                    for param_name in node.param_names:
-                        owned_keys.append(make_key(node.id, param_name))
+            if hasattr(component, "model"):
+                worker_keys = divide_params(component.model, slef.num_workers)
+                owned_keys.extend(worker_keys[self.rank])
         print("Owned keys", self.rank, owned_keys)
         return owned_keys
 

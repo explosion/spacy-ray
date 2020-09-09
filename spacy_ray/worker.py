@@ -30,9 +30,11 @@ class Worker:
     def __init__(
         self,
         config: Config,
+        *,
         rank: int = 0,
         num_workers: int = 1,
         use_gpu: int = 0,
+        strategy: str="peer_params",
         ray=None,
     ):
         if ray is None:
@@ -45,6 +47,7 @@ class Worker:
         self.num_workers = num_workers
         self.gpu_id = self._resolve_gpu(use_gpu)
         self.nlp, self.config = self._load_nlp_and_config(config)
+        self.strategy = strategy
         self._initialize_models(self.nlp, self.config)
         self._evaluation_callback = lambda: {}
         self._results = []
@@ -65,7 +68,7 @@ class Worker:
         # parameter we will accumulate before running the optimizer.
         return self.num_workers * self.config["training"]["accumulate_gradient"]
 
-    def train(self, use_gpu: bool, conn, evaluater, conn_type) -> None:
+    def train(self, use_gpu: bool, conn, evaluater) -> None:
         def evaluate():
             if self.rank == 0:
                 scores = self.evaluate()
@@ -78,7 +81,7 @@ class Worker:
                     scores = self.ray.get(evaluater.get_scores.remote())
                 return scores
 
-        self._set_params_proxies(self.nlp, conn, conn_type)
+        self._set_params_proxies(self.nlp, conn, self.strategy)
         train_batches = create_train_batches(
             self.config["training"]["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
@@ -176,7 +179,7 @@ class Worker:
             proxy = RayProxy(conn, ray=self.ray, use_thread=True)
         elif strategy == "peer_params":
             proxy = RayPeerProxy(
-                conn, self.get_optimizer(), self.get_owned_keys(nlp), ray=self.ray
+                conn, self.get_optimizer(), self.get_owned_keys(), ray=self.ray
             )
         else:
             if self.rank == 0:
@@ -194,9 +197,8 @@ class Worker:
         owned_keys = []
         for name, component in self.nlp.pipeline:
             if hasattr(component, "model"):
-                worker_keys = divide_params(component.model, slef.num_workers)
+                worker_keys = divide_params(component.model, self.num_workers)
                 owned_keys.extend(worker_keys[self.rank])
-        print("Owned keys", self.rank, owned_keys)
         return owned_keys
 
 

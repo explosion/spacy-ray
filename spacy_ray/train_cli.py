@@ -33,9 +33,10 @@ def ray_train_cli(
     config_path: Path = Arg(..., help="Path to config file", exists=True),
     code_path: Optional[Path] = Opt(None, "--code-path", "-c", help="Path to Python file with additional code (registered functions) to be imported"),
     verbose: bool = Opt(False, "--verbose", "-V", "-VV", help="Display more information for debugging purposes"),
+    shared_opt: bool=Opt(False, "--shared-opt", "-so", help="Whether to use the 'shared optimizer' strategy"),
     use_gpu: int = Opt(-1, "--use-gpu", "-g", help="Use GPU"),
     num_workers: int=Opt(1, "--num_workers", "-w", help="Number of workers"),
-    ray_address: str=Opt("", "--address", "-a", help="Address of ray cluster")
+    ray_address: str=Opt("", "--address", "-a", help="Address of ray cluster"),
     # fmt: on
 ):
     util.logger.setLevel(logging.DEBUG if verbose else logging.ERROR)
@@ -43,10 +44,13 @@ def ray_train_cli(
     config = util.load_config(
         config_path, overrides=parse_config_overrides(ctx.args), interpolate=True
     )
-    distributed_setup_and_train(config, use_gpu, num_workers, ray_address)
+    if shared_opt:
+        distributed_setup_and_train_shared_optimizer(config, use_gpu, num_workers, ray_address)
+    else:
+        distributed_setup_and_train_shared_params(config, use_gpu, num_workers, ray_address)
 
 
-def distributed_setup_and_train(config, use_gpu, num_workers, ray_address, ray=None):
+def distributed_setup_and_train_shared_params(config, use_gpu, num_workers, ray_address, ray=None):
     if ray is None:
         import ray
     if ray_address:
@@ -63,5 +67,29 @@ def distributed_setup_and_train(config, use_gpu, num_workers, ray_address, ray=N
     conn = ray.remote(SharedParams).options(num_gpus=0).remote()
     futures = []
     for i, w in enumerate(workers):
-        futures.append(w.train.remote(use_gpu, conn, evaluater))
+        futures.append(w.train.remote(use_gpu, conn, evaluater, "shared_params"))
+    ray.get(futures)
+
+
+def distributed_setup_and_train_shared_optimizer(config, use_gpu, num_workers, ray_address, ray=None):
+    if ray is None:
+        import ray
+    if ray_address:
+        ray.init(address=ray_address)
+    else:
+        ray.init(ignore_reinit_error=True)
+
+    RemoteWorker = ray.remote(Worker).options(num_gpus=int(use_gpu >= 0), num_cpus=2)
+    workers = [
+        RemoteWorker.remote(config, rank, num_workers, use_gpu)
+        for rank in range(num_workers)
+    ]
+    evaluater = ray.remote(Evaluater).remote()
+    conn = ray.remote(SharedOptimizer).options(num_gpus=0).remote(
+        {"optimizer": config["training"]["optimizer"]},
+        ray.get(workers[0].get_quorum.remote())
+    )
+    futures = []
+    for i, w in enumerate(workers):
+        futures.append(w.train.remote(use_gpu, conn, evaluater, "shared_optimizer"))
     ray.get(futures)

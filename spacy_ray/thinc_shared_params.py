@@ -21,19 +21,17 @@ class SharedParams:
     def get_transaction_id(self, key):
         return self._transaction_ids[key]
 
-    def get_param(self, model_id, name):
+    def get_param(self, key):
         key = (model_id, name)
         return (self._transaction_ids[key], self._params[key])
 
-    def get_grad(self, version, model_id, name):
-        key = (model_id, name)
+    def get_grad(self, version, key):
         if self._transaction_ids.get(key) != version:
             return None
         else:
             return self._grads.get(key)
 
-    def get_grad_count(self, version, model_id, name):
-        key = (model_id, name)
+    def get_grad_count(self, version, key):
         if self._transaction_ids.get(key) != version:
             return None
         elif key not in self._grad_counts:
@@ -41,15 +39,16 @@ class SharedParams:
         else:
             return self._grad_counts[key]
 
-    def set_param(self, version, model_id, name, value):
-        key = (model_id, name)
+    def set_param(self, key, value):
         self._params[key] = value
-        self._transaction_ids[key] = version
+        self._transaction_ids[key] += 1
+        version = self._transaction_ids[key]
         # Discard gradients when we change version.
         self._grads[key] = None
         self._grad_counts[key] = 0
+        return version
 
-    def set_grad(self, tid, model_id, name, value, grad_count):
+    def set_grad(self, tid, key, value, grad_count):
         key = (model_id, name)
         current_tid = self._transaction_ids.get(key)
         if tid != current_tid:

@@ -11,7 +11,8 @@ from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
-from .thinc_remote_params import RayHeadProxy, RayChildProxy
+from .thinc_remote_params import RayHeadProxy, RayChildProxy, RayProxy
+from .thinc_shared_optimizer import SharedOptimizer
 from .util import set_params_proxy
 
 
@@ -23,6 +24,7 @@ class Worker:
     gpu_id: int
     nlp: Language
     config: Config
+    strategy: str
     _results: List
     _evaluation_callback: Any
 
@@ -64,7 +66,7 @@ class Worker:
         # parameter we will accumulate before running the optimizer.
         return self.num_workers * self.config["training"]["accumulate_gradient"]
 
-    def train(self, use_gpu: bool, conn, evaluater) -> None:
+    def train(self, use_gpu: bool, conn, evaluater, conn_type) -> None:
         def evaluate():
             if self.rank == 0:
                 scores = self.evaluate()
@@ -77,7 +79,7 @@ class Worker:
                     scores = self.ray.get(evaluater.get_scores.remote())
                 return scores
 
-        self._set_params_proxies(self.nlp, conn)
+        self._set_params_proxies(self.nlp, conn, conn_type)
         train_batches = create_train_batches(
             self.config["training"]["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
@@ -170,16 +172,19 @@ class Worker:
         if weights_data is not None:
             raise NotImplementedError
 
-    def _set_params_proxies(self, nlp: Language, conn) -> None:
-        if self.rank == 0:
-            proxy = RayHeadProxy(
-                conn,
-                self.get_optimizer(),
-                self.get_quorum(),
-                ray=self.ray
-            ) # type: ignore
+    def _set_params_proxies(self, nlp: Language, conn, conn_type) -> None:
+        if conn_type == "shared_optimizer":
+            proxy = RayProxy(conn, ray=self.ray, use_thread=True)
         else:
-            proxy = RayChildProxy(conn) # type: ignore
+            if self.rank == 0:
+                proxy = RayHeadProxy(
+                    conn,
+                    self.get_optimizer(),
+                    self.get_quorum(),
+                    ray=self.ray
+                ) # type: ignore
+            else:
+                proxy = RayChildProxy(conn) # type: ignore
  
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):

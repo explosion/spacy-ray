@@ -4,7 +4,7 @@ from collections import Counter
 import threading
 from timeit import default_timer as timer
 from thinc.types import FloatsXd
-from thinc.api import Optimizer
+from thinc.api import Config, Optimizer, registry
 from .util import KeyT
 
 
@@ -33,12 +33,12 @@ class SharedOptimizer:
     _n_dropped: int
     _n_updates: int
 
-    def __init__(self, optimizer: Optimizer, quorum: int, ray=None):
+    def __init__(self, optimizer_config: Config, quorum: int, ray=None):
         if ray is None:
             import ray  # type: ignore
         self.ray = ray
         self.quorum = quorum
-        self.optimizer = optimizer
+        self.optimizer = registry.make_from_config(optimizer_config)["optimizer"]
         self._params = {}
         self._progress = Counter()
         self._n_kept = 0

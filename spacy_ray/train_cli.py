@@ -53,7 +53,13 @@ def ray_train_cli(
 
     RemoteWorker = ray.remote(Worker).options(num_gpus=int(use_gpu >= 0), num_cpus=2)
     workers = [
-        RemoteWorker.remote(config, rank, num_workers, use_gpu, strategy)
+        RemoteWorker.remote(
+            config,
+            rank=rank,
+            num_workers=num_workers,
+            use_gpu=use_gpu,
+            strategy=strategy
+        )
         for rank in range(num_workers)
     ]
     evaluater = ray.remote(Evaluater).remote()

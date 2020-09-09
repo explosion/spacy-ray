@@ -1,8 +1,8 @@
-from typing import Dict, Any, Tuple, Callable, List
+from typing import Dict, Any, Tuple, Callable
 from datetime import timedelta
 
+from spacy.language import Language
 from spacy.util import registry
-from spacy import util
 from spacy.errors import Errors
 from wasabi import msg
 

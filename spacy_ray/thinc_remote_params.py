@@ -1,10 +1,11 @@
-from typing import Dict, Any
+from typing import Dict, Set, Iterable, Any
 from timeit import default_timer as timer
 from collections import defaultdict, Counter
 import time
 import threading
 from thinc.types import FloatsXd
-from .util import ManyTimer, make_key
+from .util import ManyTimer, make_key, KeyT
+from .thinc_shared_params import SharedParams
 
 
 def thread_function(next_params, ray, conn, poll):

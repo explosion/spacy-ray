@@ -11,9 +11,8 @@ from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
-from .thinc_remote_params import RayHeadProxy, RayChildProxy, RayProxy
-from .thinc_shared_optimizer import SharedOptimizer
-from .util import set_params_proxy
+from .thinc_remote_params import RayHeadProxy, RayChildProxy, RayProxy, RayPeerProxy
+from .util import set_params_proxy, make_key
 
 
 class Worker:
@@ -172,9 +171,16 @@ class Worker:
         if weights_data is not None:
             raise NotImplementedError
 
-    def _set_params_proxies(self, nlp: Language, conn, conn_type) -> None:
-        if conn_type == "shared_optimizer":
+    def _set_params_proxies(self, nlp: Language, conn, strategy) -> None:
+        if strategy == "shared_optimizer":
             proxy = RayProxy(conn, ray=self.ray, use_thread=True)
+        elif strategy == "peer_params":
+            proxy = RayPeerProxy(
+                conn,
+                self.get_optimizer(),
+                self.get_owned_keys(nlp),
+                ray=self.ray
+            )
         else:
             if self.rank == 0:
                 proxy = RayHeadProxy(
@@ -189,6 +195,18 @@ class Worker:
         for name, component in nlp.pipeline:
             if hasattr(component, "model"):
                 set_params_proxy(component.model, proxy)
+
+    def get_owned_keys(self):
+        owned_keys = []
+        for name, component in self.nlp.pipeline:
+            if not hasattr(component, "model"):
+                continue
+            for node in component.model.walk():
+                if (node.id % self.num_workers) == self.rank:
+                    for param_name in node.param_names:
+                        owned_keys.append(make_key(node.id, param_name))
+        print("Owned keys", self.rank, owned_keys)
+        return owned_keys
 
 
 class FakeOptimizer:

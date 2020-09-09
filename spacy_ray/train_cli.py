@@ -44,8 +44,7 @@ def ray_train_cli(
     config = util.load_config(
         config_path, overrides=parse_config_overrides(ctx.args), interpolate=True
     )
-    if ray is None:
-        import ray
+    import ray
     if ray_address:
         ray.init(address=ray_address)
     else:

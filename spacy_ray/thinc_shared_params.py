@@ -22,7 +22,6 @@ class SharedParams:
         return self._transaction_ids[key]
 
     def get_param(self, key):
-        key = (model_id, name)
         return (self._transaction_ids[key], self._params[key])
 
     def get_grad(self, version, key):
@@ -49,7 +48,6 @@ class SharedParams:
         return version
 
     def set_grad(self, tid, key, value, grad_count):
-        key = (model_id, name)
         current_tid = self._transaction_ids.get(key)
         if tid != current_tid:
             # If we've moved past this version, discard the gradient.

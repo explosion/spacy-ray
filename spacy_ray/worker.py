@@ -11,7 +11,7 @@ from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
-from .thinc_remote_params import RayHeadProxy, RayChildProxy, RayProxy, RayPeerProxy
+from .thinc_proxies import RayHeadProxy, RayChildProxy, RayProxy, RayPeerProxy
 from .util import set_params_proxy, make_key
 
 

@@ -308,3 +308,102 @@ class RayHeadProxy:
             return self.ray.get(value)[0]
 
 
+class RayPeerProxy:
+    """Proxy for workers where each worker owns some of the parameters. For
+    parameters they don't own, workers will pull parameters and push gradients.
+    For parameters they do own, they pull gradients, make the update, and push
+    parameters.
+    """
+    ray: Any
+    conn: SharedParams
+    _params: Dict[KeyT, FloatsXd]
+    _versions: Dict[KeyT, int]
+    _owned_keys: Set[KeyT]
+    _grads: Dict
+
+    def __init__(self, connection, optimizer, keys: Iterable[KeyT], *, grads_per_update: int=2, ray=None):
+        if ray is None:
+            import ray  # type: ignore
+        # Pass in 'ray' so that we can test with a mock object.
+        self.ray = ray
+        # This 'connection' object will usually be a ray remote.
+        self.conn = connection
+        self.grads_per_update = grads_per_update
+        self._owned_keys = set(keys)
+        self._params = {}
+        self._versions = {}
+        self._grads = {}
+        self._grad_counts = Counter()
+
+    def set_param(self, model_id: int, name: str, value: FloatsXd) -> None:
+        """Set a parameter to the connection."""
+        key = make_key(model_id, name)
+        if key in self._owned_keys:
+            self._params[key] = value
+            self._versions[key] = self.ray.get(self.conn.set_param.remote(key, value))
+            self._grads[key] = None
+            self._grad_counts[key] = 0
+
+    def get_param(self, model_id: int, name: str) -> FloatsXd:
+        """Get a parameter from the connection."""
+        key = make_key(model_id, name)
+        self._maybe_update_param(key)
+        return self._params[key]
+
+    def set_grad(self, model_id: int, name: str, value: FloatsXd) -> None:
+        """Set a gradient to the connection."""
+        key = make_key(model_id, name)
+        if key in self._owned_keys:
+            self._grads[key] = value
+        else:
+            self.ray.get(
+                self.conn.set_grad.remote(key, self._versions[key], value)
+            )
+
+    def inc_grad(self, model_id: int, name: str, value: FloatsXd) -> None:
+        """Increment a gradient to the connection."""
+        key = make_key(model_id, name)
+        if key in self._owned_params:
+            if self._grads.get(key) is None:
+                self._grads[key] = value
+            else:
+                self._grads[key] += value
+        else:
+            self.ray.get(
+                self.conn.inc_grad.remote(key, self._versions[key], value)
+            )
+        self._grad_counts[key] += 1
+
+    def _maybe_update_param(self, key):
+        if self._grad_counts[key] < self.grads_per_update:
+            return False
+        elif key in self._owned_params:
+            remote_grad = self.ray.get(
+                self.conn.get_grad.remote(key, self._versions[key])
+            )
+            self._grads[key] += remote_grad
+            next_param = self.optimizer(key, self._params[key], self._grads[key])
+            self._params[key] = next_param
+            self._versions[key] = self.ray.get(
+                self.conn.set_param.remote(key, next_param)
+            )
+            self._grads[key].fill(0)
+            self._grad_counts[key] = 0
+            return True
+        else:
+            next_version, next_param = self.ray.get(
+                self.conn.get_param.remote(key)
+            )
+            self._versions[key] = next_version
+            self._params[key] = next_param
+            return True
+
+    def _sync_params(self):
+        self._await_grads()
+        self._params = {}
+        self._versions = {}
+        self._next_params = {}
+        params = self.ray.get(self.conn.get_updated_params.remote(0))
+        for key, (version, param) in params.items():
+            self._params[key] = param
+            self._versions[key] = version

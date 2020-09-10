@@ -18,6 +18,7 @@ class Timer:
     def __enter__(self):
         self.start = time.time()
         self.n += 1
+        return self
 
     def __exit__(self, *args):
         interval = time.time() - self.start
@@ -53,11 +54,14 @@ def make_key(model_id: int, name: str) -> Tuple[int, str]:
 
 
 def divide_params(model, num_workers):
+    all_keys = []
+    for node in model.walk():
+        for param_name in node.param_names:
+            all_keys.append(make_key(node.id, param_name))
+    n = len(all_keys) // num_workers
     worker_keys = []
-    for rank in range(num_workers):
-        worker_keys.append([])
-        for node in model.walk():
-            if (node.id % num_workers) == rank:
-                for param_name in node.param_names:
-                    worker_keys[-1].append(make_key(node.id, param_name))
+    for i in range(0, len(all_keys), n):
+        worker_keys.append(all_keys[i : i+n])
+        print(i, i+n)
+    worker_keys.reverse()
     return worker_keys

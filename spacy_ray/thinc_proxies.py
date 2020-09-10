@@ -318,7 +318,7 @@ class RayPeerProxy:
         self._grads = {}
         self._grad_counts = Counter()
         self._futures = []
-
+    
     def check_version(self, key: KeyT, version: int) -> Optional[bool]:
         if key not in self._versions:
             return None

@@ -32,11 +32,6 @@ class Timer:
         print(f"{self.state}: {self.sum / self.n:0.4f}")
 
 
-def thread_training(train_data, model):
-    for X, Y in train_data:
-        Yh, backprop = model.begin_update(X)
-        backprop(Yh - Y)
-
 
 @ray.remote
 class Worker:
@@ -48,18 +43,17 @@ class Worker:
         self.train_data = None
         self.dev_data = None
         self.timers = {k: Timer(k) for k in ["forward", "backprop"]}
-        self.thread = None
 
     def sync_params(self):
         for key in self.proxy._owned_keys:
             self.proxy.send_param(key)
 
-    def inc_grad(self, key, version, value) -> None:
+    async def inc_grad(self, key, version, value) -> None:
         assert key in self.proxy._owned_keys
         if self.proxy.check_version(key, version):
             self.proxy.inc_grad(key[0], key[1], value)
     
-    def set_param(self, key, version, value) -> Optional[FloatsXd]:
+    async def set_param(self, key, version, value) -> Optional[FloatsXd]:
         return self.proxy.receive_param(key, version, value)
 
     def add_model(self, n_hidden, dropout):
@@ -76,12 +70,12 @@ class Worker:
         shard_size = len(train_X) // self.n_workers
         shard_start = self.i * shard_size
         shard_end = shard_start + shard_size
-        self.train_data = self.model.ops.multibatch(
+        self.train_data = list(self.model.ops.multibatch(
             batch_size,
             train_X[shard_start : shard_end],
             train_Y[shard_start : shard_end],
             shuffle=True
-        )
+        ))
         self.dev_data = self.model.ops.multibatch(batch_size, dev_X, dev_Y)
         # Set any missing shapes for the model.
         self.model.initialize(X=train_X[:5], Y=train_Y[:5])
@@ -99,18 +93,18 @@ class Worker:
             self.proxy
         )
 
-    def train_epoch(self):
-        # Really not sure whether this works.
-        # Try running the actual work in a child thread, so we're not blocking
-        # the thread and can receive from the other workers.
-        self.thread = threading.Thread(
-            target=thread_training,
-            args=(self.train_data, self.model)
-        )
-        self.thread.start()
+    async def train_epoch(self):
+        for i in range(len(self.train_data)):
+            await self.train_batch(i)
 
-    def is_running(self):
-        return self.thread.is_alive()
+    async def train_batch(self, index):
+        if index >= len(self.train_data):
+            return None
+        else:
+            X, Y = self.train_data[index]
+            Yh, backprop = self.model.begin_update(X)
+            backprop(Yh - Y)
+            return (self.i, index+1)
 
     def evaluate(self):
         correct = 0
@@ -132,28 +126,26 @@ def main(
     ray.init(lru_evict=True)
     workers = []
     optimizer = Adam(0.001)
-    print("Add workers and model")
     for i in range(n_workers):
-        worker = Worker.remote(i, n_workers)
+        worker = Worker.options(max_concurrency=2).remote(i, n_workers)
         ray.get(worker.add_model.remote(n_hidden, dropout))
         workers.append(worker)
-    print("Set proxy")
     for worker in workers:
         ray.get(worker.set_proxy.remote(workers, optimizer))
-    print("Set data")
     for worker in workers:
         ray.get(worker.add_data.remote(batch_size))
 
-    print("Train")
     for i in range(n_epoch):
         with Timer("epoch"):
-            for worker in workers:
-                ray.get(worker.train_epoch.remote())
-            todo = list(workers)
+            todo = [w.train_batch.remote(0) for w in workers]
             while todo:
-                time.sleep(1)
-                todo = [w for w in workers if ray.get(w.is_running.remote())]
-        print(i, ray.get(workers[0].evaluate.remote()))
+                done, next_todo = ray.wait(todo, num_returns=1)
+                for result in ray.get(done):
+                    if result is not None:
+                        worker_i, data_i = result
+                        next_todo.append(workers[worker_i].train_batch.remote(data_i))
+                todo = next_todo
+            print(i, ray.get(workers[0].evaluate.remote()))
 
 
 if __name__ == "__main__":

@@ -38,7 +38,7 @@ def thread_training(train_data, model):
         backprop(Yh - Y)
 
 
-@ray.remote
+@ray.remote(num_cpus=2)
 class Worker:
     def __init__(self, i, n_workers):
         self.i = i

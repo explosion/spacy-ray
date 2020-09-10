@@ -41,6 +41,7 @@ def set_params_proxy(model, proxy):
     its children. Experimental.
     """
     for node in model.walk():
+        node._params.proxy = None
         for name in node.param_names:
             if node.has_param(name):
                 proxy.set_param(node.id, name, node.get_param(name))

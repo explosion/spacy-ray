@@ -1,8 +1,9 @@
 import time
 import os
 from pathlib import Path
-from typing import List, Tuple, Dict, Union, Any
+from typing import List, Tuple, Dict, Union, Any, Optional
 from thinc.config import Config
+from thinc.types import FloatsXd
 from spacy.cli._util import get_sourced_components
 from spacy.cli.train import msg, train_while_improving, load_from_paths
 from spacy.cli.train import create_train_batches, create_evaluation_callback
@@ -53,6 +54,16 @@ class Worker:
         self._results = []
         self._has_evaluation_callback = False
 
+    async def inc_grad(self, key, version, value) -> None:
+        if self.proxy.check_version(key, version):
+            self.proxy.inc_grad(key, value)
+    
+    async def get_param(self, key, version) -> Optional[FloatsXd]:
+        if self.proxy.check_version(key, version):
+            return self.proxy.get_param(key)
+        else:
+            return None
+
     def get_optimizer(self) -> Optimizer:
         return self.config["training"]["optimizer"]
 
@@ -68,7 +79,7 @@ class Worker:
         # parameter we will accumulate before running the optimizer.
         return self.num_workers * self.config["training"]["accumulate_gradient"]
 
-    def train(self, use_gpu: bool, conn, evaluater) -> None:
+    def train(self, peers: List["Remote"], evaluater) -> None:
         def evaluate():
             if self.rank == 0:
                 scores = self.evaluate()
@@ -81,7 +92,7 @@ class Worker:
                     scores = self.ray.get(evaluater.get_scores.remote())
                 return scores
 
-        self._set_params_proxies(self.nlp, conn, self.strategy)
+        self._set_params_proxies(self.nlp, peers, self.strategy)
         train_batches = create_train_batches(
             self.config["training"]["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
@@ -124,6 +135,88 @@ class Worker:
 
     def get_training_config(self) -> Config:
         return self.config["training"]
+
+    """
+    Okay this is pretty mind-bending stuff...But the idea is that the remote
+    workers need to communicate directly, to avoid extra copies. The mechanics
+    of this are super twisted though, because it mixes all sorts of levels. But
+    it has the be *exactly this* worker object that is passed through, because
+    we need the remote actor. That's why it's so strange.
+
+    The workers install a "proxy" object into the Thinc models. When this object
+    is installed, Thinc will direct calls to get_param, inc_grad, set_param etc
+    through the proxy.
+
+    On each worker, a subset of the weights will be "local". The proxy will
+    receive a list of the keys that are local, and a mapping of keys to workers.
+    If the key isn't local, a remote call is made to the worker.
+
+    That results in these calls: inc_grad, and get_param. During the forward
+    pass, the workers will be calling get_param on their remotes to make sure
+    they've pulled the correct weights. And in the backward pass, they'll call
+    inc_grad to report their gradient. The `get_params` method also returns a version
+    ID, which is passed into inc_grad. This allows the proxy to check the gradient
+    is still current.
+
+    I hate circular references, it makes the code hard to understand and makes
+    Python use GC. But the circular reference here is necessary:
+
+    * Workers hold a reference to the nlp object. Within the nlp object, models
+        hold references to the "proxy" object.
+    * The proxy object holds a reference to the peer mapping, whose values are
+        the workers.
+    """
+
+    async def inc_grad(self, key, version, value) -> None:
+        if self.proxy.check_version(key, version):
+            self.proxy.inc_grad(key, value)
+    
+    async def get_param(self, key, version) -> Optional[FloatsXd]:
+        if self.proxy.check_version(key, version):
+            return self.proxy.get_param(key)
+        else:
+            return None
+    
+    def get_owned_keys(self):
+        owned_keys = []
+        for name, component in self.nlp.pipeline:
+            if hasattr(component, "model"):
+                worker_keys = divide_params(component.model, self.num_workers)
+                owned_keys.extend(worker_keys[self.rank])
+        return owned_keys
+
+    def get_peer_map(self, workers):
+        peer_map = {}
+        for name, component in self.nlp.pipeline:
+            if hasattr(component, "model"):
+                worker_keys = divide_params(component.model, self.num_workers)
+                for worker, keys in zip(workers, worker_keys):
+                    for key in keys:
+                        peer_map[key] = worker
+        return peer_map
+
+    def _set_params_proxies(self, nlp: Language, conn, strategy) -> None:
+        if strategy == "shared_optimizer":
+            proxy = RayProxy(conn, ray=self.ray, use_thread=True)
+        elif strategy == "peer_params":
+            proxy = RayPeerProxy(
+                self.get_peer_map(conn),
+                self.get_optimizer(),
+                self.get_owned_keys(),
+                ray=self.ray
+            )
+        else:
+            if self.rank == 0:
+                proxy = RayHeadProxy(
+                    conn, self.get_optimizer(), self.get_quorum(), ray=self.ray
+                )  # type: ignore
+            else:
+                proxy = RayChildProxy(conn)  # type: ignore
+
+        for name, component in nlp.pipeline:
+            if hasattr(component, "model"):
+                set_params_proxy(component.model, proxy)
+        self.proxy = proxy
 
     def _resolve_gpu(self, use_gpu: int) -> int:
         if use_gpu >= 0:
@@ -174,32 +267,7 @@ class Worker:
         if weights_data is not None:
             raise NotImplementedError
 
-    def _set_params_proxies(self, nlp: Language, conn, strategy) -> None:
-        if strategy == "shared_optimizer":
-            proxy = RayProxy(conn, ray=self.ray, use_thread=True)
-        elif strategy == "peer_params":
-            proxy = RayPeerProxy(
-                conn, self.get_optimizer(), self.get_owned_keys(), ray=self.ray
-            )
-        else:
-            if self.rank == 0:
-                proxy = RayHeadProxy(
-                    conn, self.get_optimizer(), self.get_quorum(), ray=self.ray
-                )  # type: ignore
-            else:
-                proxy = RayChildProxy(conn)  # type: ignore
 
-        for name, component in nlp.pipeline:
-            if hasattr(component, "model"):
-                set_params_proxy(component.model, proxy)
-
-    def get_owned_keys(self):
-        owned_keys = []
-        for name, component in self.nlp.pipeline:
-            if hasattr(component, "model"):
-                worker_keys = divide_params(component.model, self.num_workers)
-                owned_keys.extend(worker_keys[self.rank])
-        return owned_keys
 
 
 class FakeOptimizer:

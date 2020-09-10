@@ -3,14 +3,16 @@ PyTorch version: https://github.com/pytorch/examples/blob/master/mnist/main.py
 TensorFlow version: https://github.com/tensorflow/tensorflow/blob/master/tensorflow/examples/tutorials/mnist/mnist.py
 """
 # pip install thinc ml_datasets typer
+import threading
+from typing import Optional
 import time
 from thinc.api import Model, chain, Relu, Softmax, Adam
+from thinc.types import FloatsXd
 import ml_datasets
 from wasabi import msg
 from tqdm import tqdm
 import typer
 from spacy_ray.thinc_proxies import RayPeerProxy
-from spacy_ray.thinc_shared_params import SharedParams
 from spacy_ray.util import set_params_proxy, divide_params
 import ray
 
@@ -29,6 +31,13 @@ class Timer:
         self.sum += interval
         print(f"{self.state}: {self.sum / self.n:0.4f}")
 
+
+def thread_training(train_data, model):
+    for X, Y in train_data:
+        Yh, backprop = model.begin_update(X)
+        backprop(Yh - Y)
+
+
 @ray.remote
 class Worker:
     def __init__(self, i, n_workers):
@@ -39,7 +48,19 @@ class Worker:
         self.train_data = None
         self.dev_data = None
         self.timers = {k: Timer(k) for k in ["forward", "backprop"]}
-        self.conn = None
+        self.thread = None
+
+    def sync_params(self):
+        for key in self.proxy._owned_keys:
+            self.proxy.send_param(key)
+
+    def inc_grad(self, key, version, value) -> None:
+        assert key in self.proxy._owned_keys
+        if self.proxy.check_version(key, version):
+            self.proxy.inc_grad(key[0], key[1], value)
+    
+    def set_param(self, key, version, value) -> Optional[FloatsXd]:
+        return self.proxy.receive_param(key, version, value)
 
     def add_model(self, n_hidden, dropout):
         # Define the model
@@ -64,20 +85,32 @@ class Worker:
         self.dev_data = self.model.ops.multibatch(batch_size, dev_X, dev_Y)
         # Set any missing shapes for the model.
         self.model.initialize(X=train_X[:5], Y=train_Y[:5])
+        self.sync_params()
 
-    def set_proxy(self, connection, optimizer):
+    def set_proxy(self, workers, optimizer):
         worker_keys = divide_params(self.model, self.n_workers)
-        print("Set proxy", worker_keys[self.i])
+        peer_map = {}
+        for peer, keys in zip(workers, worker_keys):
+            for key in keys:
+                peer_map[key] = peer
+        self.proxy = RayPeerProxy(peer_map, optimizer, worker_keys[self.i])
         set_params_proxy(
             self.model,
-            RayPeerProxy(connection, optimizer, worker_keys[self.i])
+            self.proxy
         )
-        self.conn = connection
 
     def train_epoch(self):
-        for X, Y in self.train_data:
-            Yh, backprop = self.model.begin_update(X)
-            backprop(Yh - Y)
+        # Really not sure whether this works.
+        # Try running the actual work in a child thread, so we're not blocking
+        # the thread and can receive from the other workers.
+        self.thread = threading.Thread(
+            target=thread_training,
+            args=(self.train_data, self.model)
+        )
+        self.thread.start()
+
+    def is_running(self):
+        return self.thread.is_alive()
 
     def evaluate(self):
         correct = 0
@@ -96,26 +129,31 @@ def main(
     if quorum is None:
         quorum = n_workers
     batch_size //= n_workers
-    ray.init()
+    ray.init(lru_evict=True)
     workers = []
-    RemoteParams = ray.remote(SharedParams)
-    conn = RemoteParams.remote()
     optimizer = Adam(0.001)
+    print("Add workers and model")
     for i in range(n_workers):
         worker = Worker.remote(i, n_workers)
         ray.get(worker.add_model.remote(n_hidden, dropout))
-        ray.get(worker.add_data.remote(batch_size))
-        ray.get(worker.set_proxy.remote(conn, optimizer))
         workers.append(worker)
+    print("Set proxy")
+    for worker in workers:
+        ray.get(worker.set_proxy.remote(workers, optimizer))
+    print("Set data")
+    for worker in workers:
+        ray.get(worker.add_data.remote(batch_size))
 
+    print("Train")
     for i in range(n_epoch):
-        futures = []
-        for worker in workers:
-            futures.append(worker.train_epoch.remote())
-
-    with Timer("epoch"):
-        ray.get(futures)
-    print(i, ray.get(workers[0].evaluate.remote()))
+        with Timer("epoch"):
+            for worker in workers:
+                ray.get(worker.train_epoch.remote())
+            todo = list(workers)
+            while todo:
+                time.sleep(1)
+                todo = [w for w in workers if ray.get(w.is_running.remote())]
+        print(i, ray.get(workers[0].evaluate.remote()))
 
 
 if __name__ == "__main__":

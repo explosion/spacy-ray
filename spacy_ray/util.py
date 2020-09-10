@@ -62,6 +62,5 @@ def divide_params(model, num_workers):
     worker_keys = []
     for i in range(0, len(all_keys), n):
         worker_keys.append(all_keys[i : i+n])
-        print(i, i+n)
     worker_keys.reverse()
     return worker_keys

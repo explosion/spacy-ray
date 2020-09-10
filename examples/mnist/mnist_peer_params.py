@@ -2,6 +2,8 @@ import copy
 import typer
 import ray
 import time
+from timeit import default_timer as timer
+from datetime import timedelta
 import ml_datasets
 from spacy_ray.thinc_worker import ThincWorker
 from spacy_ray.util import Timer
@@ -68,14 +70,17 @@ def main(
         ray.get(worker.sync_params.remote())
     print("Train")
     for i in range(n_epoch):
+        start = timer()
         for worker in workers:
             ray.get(worker.train_epoch.remote())
         todo = list(workers)
         while todo:
             time.sleep(1)
             todo = [w for w in workers if ray.get(w.is_running.remote())]
+        end = timer()
+        duration = timedelta(seconds=int(end - start))
         grads_usage = [ray.get(w.get_percent_grads_used.remote()) for w in workers]
-        print(i, ray.get(workers[0].evaluate.remote()), grads_usage)
+        print(duration, i, ray.get(workers[0].evaluate.remote()), grads_usage)
 
 
 if __name__ == "__main__":

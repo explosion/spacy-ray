@@ -53,7 +53,6 @@ class ThincWorker:
             break
 
     def sync_params(self):
-        print(self.proxy._owned_keys)
         for key in self.proxy._owned_keys:
             self.proxy.send_param(key)
 
@@ -92,7 +91,6 @@ class ThincWorker:
         self.thread.start()
 
     def is_running(self):
-        print("Is running")
         return self.thread.is_alive()
 
     def evaluate(self):

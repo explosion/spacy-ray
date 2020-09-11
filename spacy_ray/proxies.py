@@ -1,6 +1,7 @@
-from typing import Dict, Set, Iterable, Any, Optional
+from typing import Dict, Set, Iterable, Any, Optional, cast
 from collections import Counter
 from thinc.types import FloatsXd
+from thinc.api import Optimizer
 from .util import make_key, KeyT
 
 
@@ -12,10 +13,15 @@ class RayPeerProxy:
     """
 
     ray: Any
+    optimizer: Optimizer
+    grads_per_update: int
+    peers: Dict
+    other_workers: Set
     _params: Dict[KeyT, FloatsXd]
+    _grads: Dict[KeyT, Optional[FloatsXd]]
     _versions: Dict[KeyT, int]
     _owned_keys: Set[KeyT]
-    _grads: Dict
+    _grad_counts: Dict[KeyT, int]
 
     def __init__(
         self,
@@ -42,7 +48,6 @@ class RayPeerProxy:
         self._versions = Counter()
         self._grads = {}
         self._grad_counts = Counter()
-        self._futures = []
 
     def check_version(self, key: KeyT, version: int) -> Optional[bool]:
         if key not in self._versions:
@@ -99,14 +104,17 @@ class RayPeerProxy:
             else:
                 self._grads[key] += value
 
-    def _maybe_update_param(self, key):
+    def _maybe_update_param(self, key: KeyT) -> bool:
         if key not in self._owned_keys:
             return False
         elif self._grad_counts[key] < self.grads_per_update:
             return False
+        elif self._grads.get(key) is None:
+            return False
         else:
+            grad = cast(FloatsXd, self._grads[key])
             self._versions[key] += 1
-            param, _ = self.optimizer(key, self._params[key], self._grads[key])
+            param, _ = self.optimizer(key, self._params[key], grad)
             self._params[key] = param
             self._grads[key] = None
             self._grad_counts[key] = 0

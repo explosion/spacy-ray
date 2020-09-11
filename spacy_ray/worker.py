@@ -1,5 +1,6 @@
 import time
 import os
+import threading
 from pathlib import Path
 from typing import List, Tuple, Dict, Union, Any, Optional
 from thinc.config import Config
@@ -13,7 +14,7 @@ from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
 from .proxies import RayPeerProxy
-from .util import set_params_proxy, divide_params
+from .util import set_params_proxy, divide_params, KeyT
 
 
 class Worker:
@@ -59,7 +60,8 @@ class Worker:
     gpu_id: int
     nlp: Language
     config: Config
-    strategy: str
+    proxy: Optional[RayPeerProxy]
+    thread: Optional[threading.Thread]
     _results: List
     _evaluation_callback: Any
 
@@ -104,13 +106,17 @@ class Worker:
         for key in self.proxy._owned_keys:
             self.proxy.send_param(key)
 
-    def inc_grad(self, key, version, value) -> None:
+    def inc_grad(self, key: KeyT, version: int, value: FloatsXd) -> None:
+        if self.proxy is None:
+            raise ValueError("Proxy object not set")
         if self.proxy.check_version(key, version):
-            self.proxy.inc_grad(key, value)
+            self.proxy.inc_grad(key[0], key[1], value)
 
-    def get_param(self, key, version) -> Optional[FloatsXd]:
-        if self.proxy.check_version(key, version):
-            return self.proxy.get_param(key)
+    def get_param(self, key: KeyT, version: int) -> Optional[FloatsXd]:
+        if self.proxy is None:
+            raise ValueError("Proxy object not set")
+        elif self.proxy.check_version(key, version):
+            return self.proxy.get_param(key[0], key[1])
         else:
             return None
 

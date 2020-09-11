@@ -20,9 +20,10 @@ def thread_training(train_data, model):
 
 class ThincWorker:
     """Worker for training Thinc models with Ray.
-    
+
     Mostly used for development, e.g. for the mnist scripts.
     """
+
     def __init__(
         self,
         config: Config,
@@ -72,7 +73,7 @@ class ThincWorker:
             self.n_grads_used += 1
         else:
             self.n_grads_discarded += 1
-    
+
     def set_param(self, key, version, value) -> Optional[FloatsXd]:
         return self.proxy.receive_param(key, version, value)
 
@@ -87,15 +88,11 @@ class ThincWorker:
             self.optimizer,
             worker_keys[self.rank],
         )
-        set_params_proxy(
-            self.model,
-            self.proxy
-        )
+        set_params_proxy(self.model, self.proxy)
 
     def train_epoch(self):
         self.thread = threading.Thread(
-            target=thread_training,
-            args=(self.train_data, self.model)
+            target=thread_training, args=(self.train_data, self.model)
         )
         self.thread.start()
 
@@ -120,12 +117,15 @@ def get_train_data(worker_id, num_workers, batch_size):
     shard_size = len(train_X) // num_workers
     shard_start = worker_id * shard_size
     shard_end = shard_start + shard_size
-    return list(ops.multibatch(
-        batch_size,
-        train_X[shard_start : shard_end],
-        train_Y[shard_start : shard_end],
-        shuffle=True
-    ))
+    return list(
+        ops.multibatch(
+            batch_size,
+            train_X[shard_start:shard_end],
+            train_Y[shard_start:shard_end],
+            shuffle=True,
+        )
+    )
+
 
 @registry.datasets("mnist_dev_batches.v1")
 def get_dev_data(batch_size):

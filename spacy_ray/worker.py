@@ -18,7 +18,7 @@ from .util import set_params_proxy, divide_params
 
 class Worker:
     """Actor class for spaCy parallel training.
-    
+
     Okay this is pretty mind-bending stuff...But the idea is that the remote
     workers need to communicate directly, to avoid extra copies. The mechanics
     of this are super twisted though, because it mixes all sorts of levels. But
@@ -53,6 +53,7 @@ class Worker:
     * The proxy object holds a reference to the peer mapping, whose values are
         the workers.
     """
+
     rank: int
     num_workers: int
     gpu_id: int
@@ -106,7 +107,7 @@ class Worker:
     def inc_grad(self, key, version, value) -> None:
         if self.proxy.check_version(key, version):
             self.proxy.inc_grad(key, value)
-    
+
     def get_param(self, key, version) -> Optional[FloatsXd]:
         if self.proxy.check_version(key, version):
             return self.proxy.get_param(key)
@@ -116,7 +117,7 @@ class Worker:
     #########################################################################
     # Process control. These are used by the script or function coordinating
     # the work.
-    # 
+    #
     ########################################################################
 
     def get_percent_grads_used(self):
@@ -220,7 +221,7 @@ class Worker:
             self.get_peer_map(peers),
             self.get_optimizer(),
             self.get_owned_keys(),
-            ray=self.ray
+            ray=self.ray,
         )
         for name, component in self.nlp.pipeline:
             if hasattr(component, "model"):

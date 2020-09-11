@@ -35,7 +35,7 @@ class Worker:
         rank: int = 0,
         num_workers: int = 1,
         use_gpu: int = 0,
-        strategy: str="peer_params",
+        strategy: str = "peer_params",
         ray=None,
     ):
         if ray is None:
@@ -57,7 +57,7 @@ class Worker:
     async def inc_grad(self, key, version, value) -> None:
         if self.proxy.check_version(key, version):
             self.proxy.inc_grad(key, value)
-    
+
     async def get_param(self, key, version) -> Optional[FloatsXd]:
         if self.proxy.check_version(key, version):
             return self.proxy.get_param(key)
@@ -170,13 +170,13 @@ class Worker:
     async def inc_grad(self, key, version, value) -> None:
         if self.proxy.check_version(key, version):
             self.proxy.inc_grad(key, value)
-    
+
     async def get_param(self, key, version) -> Optional[FloatsXd]:
         if self.proxy.check_version(key, version):
             return self.proxy.get_param(key)
         else:
             return None
-    
+
     def get_owned_keys(self):
         owned_keys = []
         for name, component in self.nlp.pipeline:
@@ -203,7 +203,7 @@ class Worker:
                 self.get_peer_map(conn),
                 self.get_optimizer(),
                 self.get_owned_keys(),
-                ray=self.ray
+                ray=self.ray,
             )
         else:
             if self.rank == 0:
@@ -266,8 +266,6 @@ class Worker:
             nlp.vocab.morphology.load_morph_exceptions(morph_rules)
         if weights_data is not None:
             raise NotImplementedError
-
-
 
 
 class FakeOptimizer:

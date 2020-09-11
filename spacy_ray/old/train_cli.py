@@ -58,7 +58,7 @@ def ray_train_cli(
             rank=rank,
             num_workers=num_workers,
             use_gpu=use_gpu,
-            strategy=strategy
+            strategy=strategy,
         )
         for rank in range(num_workers)
     ]

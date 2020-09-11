@@ -1,3 +1,4 @@
+import time
 import typer
 import logging
 from pathlib import Path
@@ -60,9 +61,11 @@ def ray_train_cli(
         for rank in range(num_workers)
     ]
     for worker in workers:
-        ray.get(worker.set_proxy(workers))
+        ray.get(worker.set_proxy.remote(workers))
     evaluater = ray.remote(Evaluater).remote()
-    futures = []
-    for i, w in enumerate(workers):
-        futures.append(w.train.remote(use_gpu, workers, evaluater))
-    ray.get(futures)
+    for worker in workers:
+        ray.get(worker.train.remote(workers, evaluater))
+    todo = list(workers)
+    while todo:
+        time.sleep(1)
+        todo = [w for w in workers if ray.get(w.is_running.remote())]

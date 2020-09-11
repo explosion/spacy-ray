@@ -102,15 +102,14 @@ class Worker:
     #
     #########################################################################
 
-    def sync_params(self):
-        for key in self.proxy._owned_keys:
-            self.proxy.send_param(key)
-
     def inc_grad(self, key: KeyT, version: int, value: FloatsXd) -> None:
         if self.proxy is None:
             raise ValueError("Proxy object not set")
         if self.proxy.check_version(key, version):
             self.proxy.inc_grad(key[0], key[1], value)
+
+    def set_param(self, key: KeyT, version: int, value: FloatsXd) -> Optional[FloatsXd]:
+        return self.proxy.receive_param(key, version, value)
 
     def get_param(self, key: KeyT, version: int) -> Optional[FloatsXd]:
         if self.proxy is None:
@@ -125,6 +124,10 @@ class Worker:
     # the work.
     #
     ########################################################################
+
+    def sync_params(self):
+        for key in self.proxy._owned_keys:
+            self.proxy.send_param(key)
 
     def get_percent_grads_used(self):
         total = self.n_grads_used + self.n_grads_discarded
@@ -182,10 +185,21 @@ class Worker:
         )
         if self.rank == 0:
             print_row, finalize_logger = self.config["training"]["logger"](self.nlp)
-        for batch, info, is_best_checkpoint in training_step_iterator:
-            if self.rank == 0 and is_best_checkpoint is not None:
-                info["words"] *= self.num_workers
-                print_row(info)
+        else:
+            print_row = lambda: None
+        self.thread = threading.Thread(
+            target=thread_training,
+            args=(
+                training_step_iterator,
+                print_row,
+                self.rank,
+                self.num_workers
+            )
+        )
+        self.thread.start()
+    
+    def is_running(self):
+        return self.thread.is_alive()
 
     def evaluate(self) -> Dict[str, Union[Dict[str, float], float]]:
         if not self._has_evaluation_callback:
@@ -320,3 +334,12 @@ class Evaluater:
             return None
         else:
             return self.scores[-1]
+
+
+def thread_training(training_step_iterator, print_row, rank, num_workers):
+    for batch, info, is_best_checkpoint in training_step_iterator:
+        if rank == 0 and is_best_checkpoint is not None:
+            info["words"] *= num_workers
+            print_row(info)
+
+

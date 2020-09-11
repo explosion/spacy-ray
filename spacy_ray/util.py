@@ -1,4 +1,5 @@
 import time
+from collections import defaultdict
 from typing import Tuple, Dict
 
 
@@ -54,13 +55,14 @@ def make_key(model_id: int, name: str) -> Tuple[int, str]:
 
 
 def divide_params(model, num_workers):
-    all_keys = []
+    keys_by_node = defaultdict(list)
     for node in model.walk():
-        for param_name in node.param_names:
-            all_keys.append(make_key(node.id, param_name))
-    n = len(all_keys) // num_workers
-    worker_keys = []
-    for i in range(0, len(all_keys), n):
-        worker_keys.append(all_keys[i : i + n])
-    worker_keys.reverse()
+        keys = [make_key(node.id, name) for name in node.param_names]
+        if keys:
+            keys_by_node[node.id].extend(keys)
+    key_groups = list(keys_by_node.values())
+    worker_keys = [[] for _ in range(num_workers)]
+    for i, kg in enumerate(key_groups):
+        worker_keys[i % num_workers].extend(kg)
+    assert len(worker_keys) == num_workers, (len(worker_keys), num_workers)
     return worker_keys

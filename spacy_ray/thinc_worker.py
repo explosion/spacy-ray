@@ -5,15 +5,11 @@ TensorFlow version: https://github.com/tensorflow/tensorflow/blob/master/tensorf
 # pip install thinc ml_datasets typer
 import threading
 from typing import Optional
-import time
-from thinc.types import FloatsXd, Floats2d
+from thinc.types import FloatsXd
 import ml_datasets
-from wasabi import msg
-from tqdm import tqdm
-from thinc.api import registry, Model, get_current_ops
+from thinc.api import registry, get_current_ops, Config
 from spacy_ray.thinc_proxies import RayPeerProxy
 from spacy_ray.util import set_params_proxy, divide_params
-import ray
 
 
 def thread_training(train_data, model):
@@ -27,10 +23,23 @@ class ThincWorker:
     
     Mostly used for development, e.g. for the mnist scripts.
     """
-    def __init__(self, config, i, n_workers):
+    def __init__(
+        self,
+        config: Config,
+        *,
+        rank: int = 0,
+        num_workers: int = 1,
+        ray=None,
+    ):
+        if ray is None:
+            # Avoid importing ray in the module. This allows a test-ray to
+            # be passed in, and speeds up the CLI.
+            import ray  # type: ignore
+
+            self.ray = ray
+        self.rank = rank
+        self.num_workers = num_workers
         config = registry.make_from_config(config)
-        self.i = i
-        self.n_workers = n_workers
         self.optimizer = config["optimizer"]
         self.train_data = config["train_data"]
         self.dev_data = config["dev_data"]
@@ -68,7 +77,7 @@ class ThincWorker:
         return self.proxy.receive_param(key, version, value)
 
     def set_proxy(self, workers, quorum):
-        worker_keys = divide_params(self.model, self.n_workers)
+        worker_keys = divide_params(self.model, self.num_workers)
         peer_map = {}
         for peer, keys in zip(workers, worker_keys):
             for key in keys:
@@ -76,7 +85,7 @@ class ThincWorker:
         self.proxy = RayPeerProxy(
             peer_map,
             self.optimizer,
-            worker_keys[self.i],
+            worker_keys[self.rank],
         )
         set_params_proxy(
             self.model,

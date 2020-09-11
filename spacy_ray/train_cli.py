@@ -7,8 +7,6 @@ from spacy.cli.train import import_code, parse_config_overrides
 import spacy.cli._util
 
 from .worker import Worker, Evaluater
-from .thinc_shared_optimizer import SharedOptimizer
-from .thinc_shared_params import SharedParams
 
 RAY_HELP = """Command-line interface for parallel and distributed computing via
 Ray. Assumes ray is installed and that the cluster is initialized. See the
@@ -58,32 +56,13 @@ def ray_train_cli(
             rank=rank,
             num_workers=num_workers,
             use_gpu=use_gpu,
-            strategy=strategy
         )
         for rank in range(num_workers)
     ]
+    for worker in workers:
+        ray.get(worker.set_proxy(workers))
     evaluater = ray.remote(Evaluater).remote()
-
-    if strategy == "shared_optimizer":
-        conn = get_shared_optimizer(ray, config, workers)
-    else:
-        conn = get_shared_params(ray, config, workers)
     futures = []
     for i, w in enumerate(workers):
-        futures.append(w.train.remote(use_gpu, conn, evaluater))
+        futures.append(w.train.remote(use_gpu, workers, evaluater))
     ray.get(futures)
-
-
-def get_shared_optimizer(ray, config, workers):
-    return (
-        ray.remote(SharedOptimizer)
-        .options(num_gpus=0)
-        .remote(
-            {"optimizer": config["training"]["optimizer"]},
-            ray.get(workers[0].get_quorum.remote()),
-        )
-    )
-
-
-def get_shared_params(ray, config, workers):
-    return ray.remote(SharedParams).options(num_gpus=0).remote()

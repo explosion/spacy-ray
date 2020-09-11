@@ -12,13 +12,47 @@ from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
-from .thinc_proxies import RayHeadProxy, RayChildProxy, RayProxy, RayPeerProxy
-from .util import set_params_proxy, make_key, divide_params
+from .thinc_proxies import RayPeerProxy
+from .util import set_params_proxy, divide_params
 
 
 class Worker:
-    """Actor class for parallel training."""
+    """Actor class for spaCy parallel training.
+    
+    Okay this is pretty mind-bending stuff...But the idea is that the remote
+    workers need to communicate directly, to avoid extra copies. The mechanics
+    of this are super twisted though, because it mixes all sorts of levels. But
+    it has the be *exactly this* worker object that is passed through, because
+    we need the remote actor. That's why it's so strange.
 
+    The workers install a "proxy" object into the Thinc models. When this object
+    is installed, Thinc will direct calls to get_param, inc_grad, set_param etc
+    through the proxy.
+
+    On each worker, a subset of the weights will be "local". The proxy will
+    receive a list of the keys that are local, and a mapping of keys to workers.
+
+    Workers optimize the parameters that are 'local' to them, and then push
+    the updates to the other workers. For parameters that aren't local, they
+    find the worker that owns that parameter, and publish the gradient to it.
+
+    This strategy is non-blocking, because the gradients and the parameters
+    are both pushed, not pulled.
+
+    In order to make this work, we need some concurrency within the workers,
+    because the workers need to be listening for updates while continuing to
+    work. Currently this is implemented by putting the main training work
+    on a thread, and letting the main thread continue to listen for connections.
+
+    Finally, not that there's a pretty tangled circular reference here. I hate
+    circular references, it makes the code hard to understand and makes
+    Python use GC. But the circular reference here is necessary:
+
+    * Workers hold a reference to the nlp object. Within the nlp object, models
+        hold references to the "proxy" object.
+    * The proxy object holds a reference to the peer mapping, whose values are
+        the workers.
+    """
     rank: int
     num_workers: int
     gpu_id: int
@@ -35,7 +69,6 @@ class Worker:
         rank: int = 0,
         num_workers: int = 1,
         use_gpu: int = 0,
-        strategy: str="peer_params",
         ray=None,
     ):
         if ray is None:
@@ -48,21 +81,50 @@ class Worker:
         self.num_workers = num_workers
         self.gpu_id = self._resolve_gpu(use_gpu)
         self.nlp, self.config = self._load_nlp_and_config(config)
-        self.strategy = strategy
         self._initialize_models(self.nlp, self.config)
         self._evaluation_callback = lambda: {}
         self._results = []
         self._has_evaluation_callback = False
+        self.thread = None
+        self.proxy = None
+        self.n_grads_used = 0
+        self.n_grads_discarded = 0
 
-    async def inc_grad(self, key, version, value) -> None:
+    ########################################################################
+    # Inter-worker communication
+    #
+    # It'd be nice to have this stuff in a different object, but we need
+    # to pass the actual 'actor' handle around, we can't use a shared reference.
+    # And if we made another actor, it would run within a different process.
+    #
+    #########################################################################
+
+    def sync_params(self):
+        for key in self.proxy._owned_keys:
+            self.proxy.send_param(key)
+
+    def inc_grad(self, key, version, value) -> None:
         if self.proxy.check_version(key, version):
             self.proxy.inc_grad(key, value)
     
-    async def get_param(self, key, version) -> Optional[FloatsXd]:
+    def get_param(self, key, version) -> Optional[FloatsXd]:
         if self.proxy.check_version(key, version):
             return self.proxy.get_param(key)
         else:
             return None
+
+    #########################################################################
+    # Process control. These are used by the script or function coordinating
+    # the work.
+    # 
+    ########################################################################
+
+    def get_percent_grads_used(self):
+        total = self.n_grads_used + self.n_grads_discarded
+        if total == 0:
+            return None
+        else:
+            return self.n_grads_used / total
 
     def get_optimizer(self) -> Optimizer:
         return self.config["training"]["optimizer"]
@@ -79,7 +141,7 @@ class Worker:
         # parameter we will accumulate before running the optimizer.
         return self.num_workers * self.config["training"]["accumulate_gradient"]
 
-    def train(self, peers: List["Remote"], evaluater) -> None:
+    def train(self, peers: List, evaluater) -> None:
         def evaluate():
             if self.rank == 0:
                 scores = self.evaluate()
@@ -92,7 +154,6 @@ class Worker:
                     scores = self.ray.get(evaluater.get_scores.remote())
                 return scores
 
-        self._set_params_proxies(self.nlp, peers, self.strategy)
         train_batches = create_train_batches(
             self.config["training"]["train_corpus"](self.nlp),
             self.config["training"]["batcher"],
@@ -101,7 +162,7 @@ class Worker:
 
         training_step_iterator = train_while_improving(
             self.nlp,
-            FakeOptimizer(conn, self.rank),
+            FakeOptimizer(),
             train_batches,
             evaluate=evaluate,
             dropout=self.config["training"]["dropout"],
@@ -136,47 +197,6 @@ class Worker:
     def get_training_config(self) -> Config:
         return self.config["training"]
 
-    """
-    Okay this is pretty mind-bending stuff...But the idea is that the remote
-    workers need to communicate directly, to avoid extra copies. The mechanics
-    of this are super twisted though, because it mixes all sorts of levels. But
-    it has the be *exactly this* worker object that is passed through, because
-    we need the remote actor. That's why it's so strange.
-
-    The workers install a "proxy" object into the Thinc models. When this object
-    is installed, Thinc will direct calls to get_param, inc_grad, set_param etc
-    through the proxy.
-
-    On each worker, a subset of the weights will be "local". The proxy will
-    receive a list of the keys that are local, and a mapping of keys to workers.
-    If the key isn't local, a remote call is made to the worker.
-
-    That results in these calls: inc_grad, and get_param. During the forward
-    pass, the workers will be calling get_param on their remotes to make sure
-    they've pulled the correct weights. And in the backward pass, they'll call
-    inc_grad to report their gradient. The `get_params` method also returns a version
-    ID, which is passed into inc_grad. This allows the proxy to check the gradient
-    is still current.
-
-    I hate circular references, it makes the code hard to understand and makes
-    Python use GC. But the circular reference here is necessary:
-
-    * Workers hold a reference to the nlp object. Within the nlp object, models
-        hold references to the "proxy" object.
-    * The proxy object holds a reference to the peer mapping, whose values are
-        the workers.
-    """
-
-    async def inc_grad(self, key, version, value) -> None:
-        if self.proxy.check_version(key, version):
-            self.proxy.inc_grad(key, value)
-    
-    async def get_param(self, key, version) -> Optional[FloatsXd]:
-        if self.proxy.check_version(key, version):
-            return self.proxy.get_param(key)
-        else:
-            return None
-    
     def get_owned_keys(self):
         owned_keys = []
         for name, component in self.nlp.pipeline:
@@ -195,25 +215,14 @@ class Worker:
                         peer_map[key] = worker
         return peer_map
 
-    def _set_params_proxies(self, nlp: Language, conn, strategy) -> None:
-        if strategy == "shared_optimizer":
-            proxy = RayProxy(conn, ray=self.ray, use_thread=True)
-        elif strategy == "peer_params":
-            proxy = RayPeerProxy(
-                self.get_peer_map(conn),
-                self.get_optimizer(),
-                self.get_owned_keys(),
-                ray=self.ray
-            )
-        else:
-            if self.rank == 0:
-                proxy = RayHeadProxy(
-                    conn, self.get_optimizer(), self.get_quorum(), ray=self.ray
-                )  # type: ignore
-            else:
-                proxy = RayChildProxy(conn)  # type: ignore
-
-        for name, component in nlp.pipeline:
+    def set_proxy(self, peers) -> None:
+        proxy = RayPeerProxy(
+            self.get_peer_map(peers),
+            self.get_optimizer(),
+            self.get_owned_keys(),
+            ray=self.ray
+        )
+        for name, component in self.nlp.pipeline:
             if hasattr(component, "model"):
                 set_params_proxy(component.model, proxy)
         self.proxy = proxy
@@ -268,13 +277,8 @@ class Worker:
             raise NotImplementedError
 
 
-
-
 class FakeOptimizer:
-    def __init__(self, conn, worker_id):
-        self.conn = conn
-        self.worker_id = worker_id
-        self._futures = []
+    def __init__(self):
         self.averages = {}
 
     def __call__(self, key, weights, gradient):
@@ -287,11 +291,6 @@ class FakeOptimizer:
 
     def step_schedules(self):
         pass
-        # ray.get(self._futures)
-        # self._futures = []
-        # if self.worker_id == 0:
-        #    self._futures.append(self.conn.step_schedules.remote())
-        # self._futures.append(self.conn.inc_progress.remote(self.worker_id))
 
 
 class Evaluater:

@@ -12,7 +12,7 @@ from spacy.cli.train import update_meta
 from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
-from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
+from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer, get_current_ops
 from .proxies import RayPeerProxy
 from .util import set_params_proxy, divide_params, KeyT
 
@@ -193,7 +193,8 @@ class Worker:
                 training_step_iterator,
                 print_row,
                 self.rank,
-                self.num_workers
+                self.num_workers,
+                self.gpu_id
             )
         )
         self.thread.start()
@@ -336,7 +337,11 @@ class Evaluater:
             return self.scores[-1]
 
 
-def thread_training(training_step_iterator, print_row, rank, num_workers):
+def thread_training(training_step_iterator, print_row, rank, num_workers, gpu_id):
+    if gpu_id >= 0:
+        # I don't fully understand why we need to do this within the thread.
+        # I think 0 is also correct here, because ray sets the available devices?
+        require_gpu(0)
     for batch, info, is_best_checkpoint in training_step_iterator:
         if rank == 0 and is_best_checkpoint is not None:
             info["words"] *= num_workers

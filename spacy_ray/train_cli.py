@@ -6,6 +6,7 @@ from spacy import util
 from typing import Optional
 from spacy.cli.train import import_code, parse_config_overrides
 import spacy.cli._util
+from thinc.api import require_gpu
 
 from .worker import Worker, Evaluater
 
@@ -38,6 +39,7 @@ def ray_train_cli(
     ray_address: str=Opt("", "--address", "-a", help="Address of ray cluster"),
     # fmt: on
 ):
+    require_gpu(0)
     util.logger.setLevel(logging.DEBUG if verbose else logging.ERROR)
     import_code(code_path)
     config = util.load_config(

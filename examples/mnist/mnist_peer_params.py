@@ -61,7 +61,12 @@ def main(
         config = copy.deepcopy(CONFIG)
         config["train_data"]["worker_id"] = i
         config["train_data"]["num_workers"] = n_workers
-        worker = Worker.remote(config, i, n_workers)
+        worker = Worker.remote(
+            config,
+            rank=i,
+            num_workers=n_workers,
+            ray=ray
+        )
         ray.get(worker.add_model.remote(model))
         workers.append(worker)
     for worker in workers:

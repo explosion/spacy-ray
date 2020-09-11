@@ -19,7 +19,7 @@ class RayPeerProxy:
 
     def __init__(
         self,
-        peers: Dict[KeyT],
+        peers: Dict[KeyT, Any],
         optimizer,
         keys: Iterable[KeyT],
         *,

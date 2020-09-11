@@ -8,7 +8,7 @@ from typing import Optional
 from thinc.types import FloatsXd
 import ml_datasets
 from thinc.api import registry, get_current_ops, Config
-from spacy_ray.thinc_proxies import RayPeerProxy
+from spacy_ray.proxies import RayPeerProxy
 from spacy_ray.util import set_params_proxy, divide_params
 
 

@@ -12,7 +12,7 @@ from spacy import util
 from spacy.language import Language
 from spacy.gold import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer
-from .thinc_proxies import RayPeerProxy
+from .proxies import RayPeerProxy
 from .util import set_params_proxy, divide_params
 
 

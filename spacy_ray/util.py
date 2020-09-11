@@ -61,8 +61,15 @@ def divide_params(model, num_workers):
         if keys:
             keys_by_node[node.id].extend(keys)
     key_groups = list(keys_by_node.values())
-    worker_keys = [[] for _ in range(num_workers)]
-    for i, kg in enumerate(key_groups):
-        worker_keys[i % num_workers].extend(kg)
+    n = max(1, len(key_groups) // num_workers)
+    worker_keys = []
+    start = 0
+    for i in range(num_workers):
+        worker_keys.append([])
+        for kg in key_groups[start : start + n]:
+            worker_keys[-1].extend(kg)
+        start += n
+    for kg in key_groups[start : ]:
+        worker_keys[-1].extend(kg)
     assert len(worker_keys) == num_workers, (len(worker_keys), num_workers)
     return worker_keys

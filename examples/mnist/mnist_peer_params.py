@@ -6,7 +6,6 @@ from timeit import default_timer as timer
 from datetime import timedelta
 import ml_datasets
 from spacy_ray.thinc_worker import ThincWorker
-from spacy_ray.util import Timer
 from thinc.api import Model
 from thinc.types import Floats2d
 

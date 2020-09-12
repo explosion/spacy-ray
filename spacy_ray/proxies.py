@@ -46,6 +46,7 @@ class RayPeerProxy:
                 self.other_workers.add(peer)
         self._params = {}
         self._versions = Counter()
+        self._next_params = {}
         self._grads = {}
         self._grad_counts = Counter()
 
@@ -74,10 +75,12 @@ class RayPeerProxy:
 
     def receive_param(self, key, version, value: FloatsXd) -> None:
         """Let the connection push a parameter to us."""
-        self._params[key] = value
-        self._versions[key] = version
-        self._grads[key] = None
-        self._grad_counts[key] = 0
+        # We have to store this in a separate place, to make sure we don't
+        # fetch the wrong version when we submit the gradient. For instance,
+        # imagine if we received the param in between the forward and backward
+        # pass. If we set the version to this one, we'd calculate a gradient
+        # on the basis of the old param, but think we had a new version.
+        self._next_params[key] = (version, value)
 
     def get_param(self, id, name) -> FloatsXd:
         key = make_key(id, name)
@@ -105,7 +108,14 @@ class RayPeerProxy:
                 self._grads[key] += value
 
     def _maybe_update_param(self, key: KeyT) -> bool:
-        if key not in self._owned_keys:
+        if key in self._next_params:
+            version, value = self._next_params.pop(key)
+            self._params[key] = value
+            self._versions[key] = version
+            self._grad_counts[key] = 0
+            self._grads[key] = None
+            return True
+        elif key not in self._owned_keys:
             return False
         elif self._grad_counts[key] < self.grads_per_update:
             return False

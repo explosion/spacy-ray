@@ -11,7 +11,7 @@ from spacy.cli.train import create_train_batches, create_evaluation_callback
 from spacy.cli.train import update_meta
 from spacy import util
 from spacy.language import Language
-from spacy.gold import Corpus
+from spacy.training import Corpus
 from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer, get_current_ops
 from .proxies import RayPeerProxy
 from .util import set_params_proxy, divide_params, KeyT

@@ -28,15 +28,17 @@ def ray_train_cli(
     ctx: typer.Context,  # This is only used to read additional arguments
     config_path: Path = Arg(..., help="Path to config file", exists=True),
     code_path: Optional[Path] = Opt(None, "--code", "-c", help="Path to Python file with additional code (registered functions) to be imported"),
-    verbose: bool = Opt(False, "--verbose", "-V", "-VV", help="Display more information for debugging purposes"),
-    use_gpu: int = Opt(-1, "--gpu-id", "-g", help="GPU ID or -1 for CPU"),
+    output_path: Optional[Path] = Opt(None, "--output", "--output-path", "-o", help="Output directory or remote storage URL for storing trained pipeline"),
     num_workers: int = Opt(1, "--n-workers", "-w", help="Number of workers"),
     ray_address: Optional[str] = Opt(None, "--address", "-a", help="Address of ray cluster"),
+    use_gpu: int = Opt(-1, "--gpu-id", "-g", help="GPU ID or -1 for CPU"),
+    verbose: bool = Opt(False, "--verbose", "-V", "-VV", help="Display more information for debugging purposes"),
     # fmt: on
 ):
     """
     Train a spaCy pipeline using Ray for parallel training.
     """
+    # TODO: wire up output path
     if use_gpu >= 0:
         msg.info("Using GPU")
         require_gpu(use_gpu)

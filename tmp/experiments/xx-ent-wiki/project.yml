@@ -1,6 +1,7 @@
 vars:
   config: "default"
   gpu: -1
+  n_workers: 2
 
 remotes:
   default: gs://galaxy-state/spacy-v3-benchmarks
@@ -42,7 +43,7 @@ commands:
       - "corpus/test.spacy"
   -
     name: train
-    help: "Train the full pipeline"
+    help: "Train without Ray"
     script: 
       - "python -m spacy train configs/${vars.config}.cfg -o training/ --gpu-id ${vars.gpu}"
     deps:
@@ -51,6 +52,18 @@ commands:
       - "configs/${vars.config}.cfg"
     outputs:
       - "training/${vars.config}/model-best"
+  -
+    name: ray-train
+    help: "Train with ray"
+    script: 
+      - "python -m spacy ray train configs/${vars.config}.cfg --n-workers ${vars.n_workers} --gpu-id ${vars.gpu}"
+    deps:
+      - "corpus/train.spacy"
+      - "corpus/dev.spacy"
+      - "configs/${vars.config}.cfg"
+    outputs:
+      - "training/${vars.config}/model-best"
+ 
   -
     name: evaluate
     help: "Evaluate on the test data and save the metrics"

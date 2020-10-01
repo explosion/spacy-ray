@@ -1,6 +1,6 @@
+from typing import Tuple, Dict
 import time
 from collections import defaultdict
-from typing import Tuple, Dict
 
 
 KeyT = Tuple[int, str]
@@ -69,7 +69,7 @@ def divide_params(model, num_workers):
         for kg in key_groups[start : start + n]:
             worker_keys[-1].extend(kg)
         start += n
-    for kg in key_groups[start : ]:
+    for kg in key_groups[start :]:
         worker_keys[-1].extend(kg)
     assert len(worker_keys) == num_workers, (len(worker_keys), num_workers)
     return worker_keys

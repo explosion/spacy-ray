@@ -1,18 +1,19 @@
+from typing import List, Dict, Union, Any, Optional
 import time
 import os
 import threading
 from pathlib import Path
-from typing import List, Tuple, Dict, Union, Any, Optional
 from thinc.config import Config
 from thinc.types import FloatsXd
-from spacy.cli._util import get_sourced_components
-from spacy.cli.train import msg, train_while_improving, load_from_paths
-from spacy.cli.train import create_train_batches, create_evaluation_callback
-from spacy.cli.train import update_meta
-from spacy import util
+from spacy.training.loop import train_while_improving, create_train_batches
+from spacy.training.loop import create_evaluation_callback, create_before_to_disk_callback
+from spacy.training.loop import update_meta
+from spacy.training.initialize import init_nlp
 from spacy.language import Language
-from spacy.training import Corpus
-from thinc.api import require_gpu, use_pytorch_for_gpu_memory, Optimizer, get_current_ops
+from spacy.util import registry, logger, resolve_dot_names
+from spacy.schemas import ConfigSchemaTraining
+from thinc.api import require_gpu, set_gpu_allocator
+
 from .proxies import RayPeerProxy
 from .util import set_params_proxy, divide_params, KeyT
 
@@ -59,7 +60,7 @@ class Worker:
     num_workers: int
     gpu_id: int
     nlp: Language
-    config: Config
+    config: Union[Dict[str, Any], Config]
     proxy: Optional[RayPeerProxy]
     thread: Optional[threading.Thread]
     _results: List
@@ -83,8 +84,15 @@ class Worker:
         self.rank = rank
         self.num_workers = num_workers
         self.gpu_id = self._resolve_gpu(use_gpu)
-        self.nlp, self.config = self._load_nlp_and_config(config)
-        self._initialize_models(self.nlp, self.config)
+        self.nlp = init_nlp(Config(config), use_gpu=self.gpu_id)
+        config = self.nlp.config.interpolate()
+        self.T = registry.resolve(config["training"], schema=ConfigSchemaTraining)
+        dot_names = [self.T["train_corpus"], self.T["dev_corpus"]]
+        self.train_corpus, self.dev_corpus = resolve_dot_names(config, dot_names)
+        self.before_to_disk = create_before_to_disk_callback(self.T["before_to_disk"])
+        allocator = self.T["gpu_allocator"]
+        if use_gpu >= 0 and allocator:
+            set_gpu_allocator(allocator)
         self._evaluation_callback = lambda: {}
         self._results = []
         self._has_evaluation_callback = False
@@ -136,55 +144,44 @@ class Worker:
         else:
             return self.n_grads_used / total
 
-    def get_optimizer(self) -> Optimizer:
-        return self.config["training"]["optimizer"]
-
-    def get_train_corpus(self) -> Corpus:
-        return self.config["training"]["train_corpus"]
-
-    def get_dev_corpus(self):
-        return self.config["training"]["dev_corpus"]
-
     def get_quorum(self) -> int:
         # Default to setting the 'quorum' to be the number of workers multiplied
         # by the accumulate_gradient value. This is how many gradients for a
         # parameter we will accumulate before running the optimizer.
-        return self.num_workers * self.config["training"]["accumulate_gradient"]
+        return self.num_workers * self.T["accumulate_gradient"]
 
-    def train(self, peers: List, evaluater) -> None:
+    def train(self, peers: List, evaluator: "Evaluator") -> None:
         def evaluate():
             if self.rank == 0:
                 scores = self.evaluate()
-                self.ray.get(evaluater.set_scores.remote(scores))
+                self.ray.get(evaluator.set_scores.remote(scores))
                 return scores
             else:
                 scores = None
                 while scores is None:
                     time.sleep(5)
-                    scores = self.ray.get(evaluater.get_scores.remote())
+                    scores = self.ray.get(evaluator.get_scores.remote())
                 return scores
 
         train_batches = create_train_batches(
-            self.config["training"]["train_corpus"](self.nlp),
-            self.config["training"]["batcher"],
-            self.config["training"]["max_epochs"],
+            self.train_corpus(self.nlp),
+            self.T["batcher"],
+            self.T["max_epochs"],
         )
-
         training_step_iterator = train_while_improving(
             self.nlp,
             FakeOptimizer(),
             train_batches,
             evaluate=evaluate,
-            dropout=self.config["training"]["dropout"],
+            dropout=self.T["dropout"],
             accumulate_gradient=1,
-            patience=self.config["training"].get("patience", 0),
-            max_steps=self.config["training"].get("max_steps", 0),
-            eval_frequency=self.config["training"]["eval_frequency"],
-            raw_text=None,
-            exclude=[],
+            patience=self.T["patience"],
+            max_steps=self.T["max_steps"],
+            eval_frequency=self.T["eval_frequency"],
+            exclude=self.T["frozen_components"],
         )
         if self.rank == 0:
-            print_row, finalize_logger = self.config["training"]["logger"](self.nlp)
+            print_row, finalize_logger = self.T["logger"](self.nlp)
         else:
             print_row = lambda: None
         self.thread = threading.Thread(
@@ -198,7 +195,7 @@ class Worker:
             )
         )
         self.thread.start()
-    
+
     def is_running(self):
         return self.thread.is_alive()
 
@@ -206,18 +203,16 @@ class Worker:
         if not self._has_evaluation_callback:
             self._evaluation_callback = create_evaluation_callback(
                 self.nlp,
-                self.get_dev_corpus(),
-                self.config["training"]["score_weights"],
+                self.dev_corpus,
+                self.T["score_weights"],
             )
             self._has_evaluation_callback = True
         return self._evaluation_callback()
 
     def save_checkpoint(self, info: Dict, output_path: Path) -> None:
-        update_meta(self.config["training"], self.nlp, info)
-        self.nlp.to_disk(output_path)
-
-    def get_training_config(self) -> Config:
-        return self.config["training"]
+        with self.nlp.select_pipes(disable=self.T["frozen_components"]):
+            update_meta(self.T, self.nlp, info)
+        self.before_to_disk(self.nlp).to_disk(output_path)
 
     def get_owned_keys(self):
         owned_keys = []
@@ -240,7 +235,7 @@ class Worker:
     def set_proxy(self, peers) -> None:
         proxy = RayPeerProxy(
             self.get_peer_map(peers),
-            self.get_optimizer(),
+            self.T["optimizer"],
             self.get_owned_keys(),
             ray=self.ray,
         )
@@ -252,51 +247,12 @@ class Worker:
     def _resolve_gpu(self, use_gpu: int) -> int:
         if use_gpu >= 0:
             gpu_id = int(os.environ.get("CUDA_VISIBLE_DEVICES", -1))
-            msg.info(f"Using GPU (isolated): {gpu_id}")
+            logger.info(f"Using GPU (isolated): {gpu_id}")
             require_gpu(0)
         else:
-            msg.info("Using CPU")
+            logger.info("Using CPU")
             gpu_id = -1
         return gpu_id
-
-    def _load_nlp_and_config(self, config: Config) -> Tuple[Language, Config]:
-        if config.get("training", {}).get("seed") is not None:
-            util.fix_random_seed(config["training"]["seed"])
-        if config.get("system", {}).get("use_pytorch_for_gpu_memory"):
-            # It feels kind of weird to not have a default for this.
-            use_pytorch_for_gpu_memory()
-        nlp, config = util.load_model_from_config(config)
-        if config["training"]["vectors"] is not None:
-            util.load_vectors_into_model(nlp, config["training"]["vectors"])
-        return nlp, config
-
-    def _initialize_models(self, nlp: Language, config: Config) -> None:
-        optimizer = config["training"]["optimizer"]
-        # Components that shouldn't be updated during training
-        frozen_components = config["training"]["frozen_components"]
-        # Sourced components that require resume_training
-        sourced_components = get_sourced_components(config)
-        resume_components = [
-            p for p in sourced_components if p not in frozen_components
-        ]
-        if resume_components:
-            with nlp.select_pipes(enable=resume_components):
-                nlp.resume_training(sgd=optimizer)
-
-        corpus = self.get_train_corpus()
-        train_examples = list(corpus(nlp))
-        with nlp.select_pipes(disable=[*frozen_components, *resume_components]):
-            nlp.begin_training(lambda: train_examples)
-
-        raw_text, tag_map, morph_rules, weights_data = load_from_paths(config)
-        if tag_map:
-            # Replace tag map with provided mapping
-            nlp.vocab.morphology.load_tag_map(tag_map)
-        if morph_rules:
-            # Load morph rules
-            nlp.vocab.morphology.load_morph_exceptions(morph_rules)
-        if weights_data is not None:
-            raise NotImplementedError
 
 
 class FakeOptimizer:
@@ -315,10 +271,10 @@ class FakeOptimizer:
         pass
 
 
-class Evaluater:
+class Evaluator:
     """Share evaluation results between workers.
 
-    One worker should publish evaluation results to the Evaluater,
+    One worker should publish evaluation results to the evaluator,
     while the other workers should retrieve them (using a wait-loop if
     necessary).
     """
@@ -346,5 +302,3 @@ def thread_training(training_step_iterator, print_row, rank, num_workers, gpu_id
         if rank == 0 and is_best_checkpoint is not None:
             info["words"] *= num_workers
             print_row(info)
-
-

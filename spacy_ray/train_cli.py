@@ -3,12 +3,12 @@ import time
 import typer
 import logging
 from pathlib import Path
-from spacy import util
+from spacy.util import load_config, logger
 from spacy.cli._util import import_code, parse_config_overrides, Arg, Opt, app
-from thinc.api import require_gpu, Config
-from wasabi import msg
+from spacy.cli._util import setup_gpu, show_validation_error
+from thinc.api import Config
 
-from .worker import Worker, Evaluater
+from .worker import Worker, Evaluator
 
 
 RAY_HELP = """CLI for parallel and distributed computing via
@@ -39,20 +39,21 @@ def ray_train_cli(
     Train a spaCy pipeline using Ray for parallel training.
     """
     # TODO: wire up output path
-    if use_gpu >= 0:
-        msg.info("Using GPU")
-        require_gpu(use_gpu)
-    else:
-        msg.info("Using CPU")
-    util.logger.setLevel(logging.DEBUG if verbose else logging.ERROR)
+    logger.setLevel(logging.DEBUG if verbose else logging.ERROR)
+    setup_gpu(use_gpu)
     import_code(code_path)
-    config_overrides = parse_config_overrides(ctx.args)
-    config = util.load_config(config_path, overrides=config_overrides, interpolate=True)
+    overrides = parse_config_overrides(ctx.args)
+    with show_validation_error(config_path):
+        config = load_config(config_path, overrides=overrides, interpolate=False)
     ray_train(config, ray_address=ray_address, num_workers=num_workers, use_gpu=use_gpu)
 
 
 def ray_train(
-    config: Config, *, ray_address: Optional[str] = None, num_workers: int = 1, use_gpu: int = -1
+    config: Config,
+    *,
+    ray_address: Optional[str] = None,
+    num_workers: int = 1,
+    use_gpu: int = -1
 ) -> None:
     # We're importing Ray here so it doesn't need to be imported when spaCy /
     # spaCy's CLI is imported (which would otherwise take too long)
@@ -71,7 +72,7 @@ def ray_train(
     ]
     for worker in workers:
         ray.get(worker.set_proxy.remote(workers))
-    evaluater = ray.remote(Evaluater).remote()
+    evaluater = ray.remote(Evaluator).remote()
     for worker in workers:
         ray.get(worker.train.remote(workers, evaluater))
     todo = list(workers)

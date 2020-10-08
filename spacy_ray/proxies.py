@@ -2,6 +2,7 @@ from typing import Dict, Set, Iterable, Any, Optional, cast
 from collections import Counter
 from thinc.types import FloatsXd
 from thinc.api import Optimizer
+
 from .util import make_key, KeyT
 
 

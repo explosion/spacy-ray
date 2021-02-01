@@ -1,5 +1,5 @@
 ray>=0.8,<1.0.0
+spacy-nightly>=3.0.0rc5,<3.1.0
+thinc
 typer
-thinc>=8.0.0a30,<8.0.0a50
-spacy-nightly>=3.0.0a35,<3.0.0a50
 pytest

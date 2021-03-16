@@ -5,8 +5,10 @@ import threading
 from pathlib import Path
 from thinc.config import Config
 from thinc.types import FloatsXd
+from spacy.cli._util import import_code
 from spacy.training.loop import train_while_improving, create_train_batches
-from spacy.training.loop import create_evaluation_callback, create_before_to_disk_callback
+from spacy.training.loop import create_evaluation_callback
+from spacy.training.loop import create_before_to_disk_callback
 from spacy.training.loop import update_meta
 from spacy.training.initialize import init_nlp
 from spacy.language import Language
@@ -73,6 +75,7 @@ class Worker:
         rank: int = 0,
         num_workers: int = 1,
         use_gpu: int = 0,
+        code_path: Optional[Path] = None,
         ray=None,
     ):
         if ray is None:
@@ -81,6 +84,7 @@ class Worker:
             import ray  # type: ignore
 
             self.ray = ray
+        import_code(code_path)
         self.rank = rank
         self.num_workers = num_workers
         self.gpu_id = self._resolve_gpu(use_gpu)
@@ -191,8 +195,8 @@ class Worker:
                 print_row,
                 self.rank,
                 self.num_workers,
-                self.gpu_id
-            )
+                self.gpu_id,
+            ),
         )
         self.thread.start()
 

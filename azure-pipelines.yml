@@ -12,15 +12,15 @@ jobs:
       Python36Linux:
         imageName: 'ubuntu-16.04'
         python.version: '3.6'
-      Python37Mac:
+      Python36Mac:
         imageName: 'macos-10.14'
-        python.version: '3.7'
-      Python38Linux:
+        python.version: '3.6'
+      Python37Linux:
         imageName: 'ubuntu-16.04'
-        python.version: '3.8'
-      Python39Mac:
+        python.version: '3.7'
+      Python38Mac:
         imageName: 'macos-10.14'
-        python.version: '3.9'
+        python.version: '3.8'
     maxParallel: 4
   pool:
     vmImage: $(imageName)

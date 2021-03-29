@@ -4,7 +4,7 @@ import typer
 import logging
 from pathlib import Path
 from spacy.util import load_config, logger
-from spacy.cli._util import import_code, parse_config_overrides, Arg, Opt, app
+from spacy.cli._util import parse_config_overrides, Arg, Opt, app
 from spacy.cli._util import setup_gpu, show_validation_error
 from thinc.api import Config
 
@@ -41,11 +41,16 @@ def ray_train_cli(
     # TODO: wire up output path
     logger.setLevel(logging.DEBUG if verbose else logging.ERROR)
     setup_gpu(use_gpu)
-    import_code(code_path)
     overrides = parse_config_overrides(ctx.args)
     with show_validation_error(config_path):
         config = load_config(config_path, overrides=overrides, interpolate=False)
-    ray_train(config, ray_address=ray_address, num_workers=num_workers, use_gpu=use_gpu)
+    ray_train(
+        config,
+        ray_address=ray_address,
+        num_workers=num_workers,
+        use_gpu=use_gpu,
+        code_path=code_path,
+    )
 
 
 def ray_train(
@@ -53,7 +58,8 @@ def ray_train(
     *,
     ray_address: Optional[str] = None,
     num_workers: int = 1,
-    use_gpu: int = -1
+    use_gpu: int = -1,
+    code_path: Optional[Path] = None,
 ) -> None:
     # We're importing Ray here so it doesn't need to be imported when spaCy /
     # spaCy's CLI is imported (which would otherwise take too long)
@@ -66,15 +72,19 @@ def ray_train(
     RemoteWorker = ray.remote(Worker).options(num_gpus=int(use_gpu >= 0), num_cpus=2)
     workers = [
         RemoteWorker.remote(
-            config, rank=rank, num_workers=num_workers, use_gpu=use_gpu,
+            config,
+            rank=rank,
+            num_workers=num_workers,
+            use_gpu=use_gpu,
+            code_path=code_path,
         )
         for rank in range(num_workers)
     ]
     for worker in workers:
         ray.get(worker.set_proxy.remote(workers))
-    evaluater = ray.remote(Evaluator).remote()
+    evaluator = ray.remote(Evaluator).remote()
     for worker in workers:
-        ray.get(worker.train.remote(workers, evaluater))
+        ray.get(worker.train.remote(workers, evaluator))
     todo = list(workers)
     while todo:
         time.sleep(1)

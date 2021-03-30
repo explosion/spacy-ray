@@ -18,9 +18,9 @@ jobs:
       Python37Linux:
         imageName: 'ubuntu-16.04'
         python.version: '3.7'
-      Python37Mac:
+      Python38Mac:
         imageName: 'macos-10.14'
-        python.version: '3.7'
+        python.version: '3.8'
     maxParallel: 4
   pool:
     vmImage: $(imageName)
@@ -32,12 +32,12 @@ jobs:
       architecture: 'x64'
 
   - script: |
-      python -m pip install --upgrade pip
-      python -m pip install --upgrade setuptools wheel
-      pip install -r requirements.txt
+      python -m pip install --upgrade pip setuptools wheel
+      python -m pip install -r requirements.txt
     displayName: 'Install dependencies'
 
-  - script: python setup.py sdist
+  - script: |
+      python setup.py sdist
     displayName: 'Build sdist'
 
   - task: DeleteFiles@1
@@ -45,8 +45,15 @@ jobs:
       contents: 'spacy_ray'
     displayName: 'Delete source directory'
 
-  - script: pip install dist/*.tar.gz
+  - script: |
+      python -m pip freeze > installed.txt
+      python -m pip uninstall -y -r installed.txt
+    displayName: 'Uninstall all packages'
+
+  - script: python -m pip install dist/*.tar.gz
     displayName: 'Install from sdist'
 
-  - script: python -m pytest --pyargs spacy_ray
+  - script: |
+      python -m pip install -r requirements.txt
+      python -m pytest --pyargs spacy_ray
     displayName: 'Run tests'

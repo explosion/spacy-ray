@@ -168,7 +168,8 @@ class Worker:
                 return scores
 
         train_batches = create_train_batches(
-            self.train_corpus(self.nlp),
+            self.nlp,
+            self.train_corpus,
             self.T["batcher"],
             self.T["max_epochs"],
         )

@@ -184,6 +184,7 @@ class Worker:
             max_steps=self.T["max_steps"],
             eval_frequency=self.T["eval_frequency"],
             exclude=self.T["frozen_components"],
+            annotating_components=self.T["annotating_components"],
         )
         if self.rank == 0:
             print_row, finalize_logger = self.T["logger"](self.nlp)
